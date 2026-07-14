@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schemas import JDData
+from agents.skill_normalizer import normalize_skill_name
 
 load_dotenv()
 
@@ -50,13 +51,15 @@ def get_client() -> instructor.Instructor:
 def extract_jd(jd_text: str, model: str = "gemini-flash-latest") -> JDData:
     """
     รับ JD text -> คืนค่าเป็น JDData ที่ผ่าน validation แล้ว
+    หลัง LLM สกัด requirements ออกมาแล้ว จะ normalize ชื่อ skill ทุกตัวผ่าน
+    skill_taxonomy_master.csv (ESCO + O*NET) ก่อน return
 
     Args:
         jd_text: เนื้อหา Job Description แบบ plain text
         model: ชื่อโมเดล Gemini ที่จะใช้
 
     Returns:
-        JDData: ชื่อตำแหน่ง + รายการ skill requirement ทั้งหมด
+        JDData: ชื่อตำแหน่ง + รายการ skill requirement ทั้งหมด (ชื่อ skill ผ่าน normalize แล้ว)
     """
     if not jd_text or not jd_text.strip():
         raise ValueError("jd_text ว่างเปล่า — ต้องมีเนื้อหาก่อนเรียก extract")
@@ -71,6 +74,13 @@ def extract_jd(jd_text: str, model: str = "gemini-flash-latest") -> JDData:
             {"role": "user", "content": f"นี่คือเนื้อหา Job Description:\n\n{jd_text}"},
         ],
     )
+
+    # Normalize ชื่อ skill ทุกตัวผ่าน taxonomy มาตรฐาน (ESCO + O*NET)
+    for req in result.requirements:
+        norm = normalize_skill_name(req.skill)
+        if norm["matched"]:
+            req.skill = norm["normalized"]
+
     return result
 
 

@@ -26,9 +26,13 @@ from schemas import ResumeData, JDData, SkillMatch
 load_dotenv()
 
 
+# Schema เฉพาะโดย LLM: ไม่มี score — LLM ทำแค่ match เท่านั้น Python คำนวณคะแนน
 # ---------------------------------------------------------
-# Schema เฉพาะของ agent นี้ (ผลลัพธ์ก่อนส่งต่อให้ Gap Agent / Judge Agent)
-# ---------------------------------------------------------
+class LLMMatchResult(BaseModel):
+    matches: list[SkillMatch] = Field(default_factory=list, description="ผลเทียบทุก skill requirement")
+
+
+# Schema สำหรับส่งออกให้แก่ agent ถัดไป: matches + คะแนนจาก Python
 class FitAnalysisResult(BaseModel):
     matches: list[SkillMatch] = Field(default_factory=list, description="ผลเทียบทุก skill requirement")
     must_have_score: int = Field(..., ge=0, le=100, description="คะแนนเฉพาะส่วน must-have skills")
@@ -38,7 +42,7 @@ class FitAnalysisResult(BaseModel):
 
 SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ความเหมาะสม (Fit Analyzer)
 คุณจะได้รับข้อมูล 2 ส่วน: (1) ข้อมูลที่สกัดจาก resume และ (2) รายการ skill requirement จาก JD
-หน้าที่ของคุณคือเทียบทีละ skill requirement กับข้อมูลใน resume แล้วให้ผลลัพธ์ตาม schema
+หน้าที่ของคุณคือเทียบทีละ skill requirement กับข้อมูลใน resume แล้วให้ผลลัพธ์ตาม schema (เฉพาะ matches ไม่ต้องคำนวณคะแนน)
 
 กฎสำคัญ:
 1. เทียบ skill requirement ทุกตัวจาก JD กับ skills/work_experience ใน resume
@@ -49,12 +53,7 @@ SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ค�
 3. evidence ต้องคัดลอกมาจาก evidence ที่มีอยู่แล้วใน resume data เท่านั้น ห้ามแต่งขึ้นเอง
    ถ้า status เป็น "missing" ให้ evidence เป็น null
 4. years_found ใส่ตามข้อมูลจริงที่พบใน resume สำหรับ skill นั้น ถ้าไม่มีให้เป็น null
-5. คำนวณคะแนน:
-   - must_have_score = สัดส่วน must-have skills ที่ status เป็น met (คิด partial เป็นครึ่งคะแนน) คูณ 100
-   - nice_to_have_score = สัดส่วน nice-to-have skills ที่ status เป็น met (คิด partial เป็นครึ่งคะแนน) คูณ 100
-   - fit_score = weighted average โดยให้น้ำหนัก must_have_score 70% และ nice_to_have_score 30%
-   - ถ้าไม่มี nice-to-have skills เลย ให้ fit_score = must_have_score
-   - ถ้าไม่มี must-have skills เลย ให้ fit_score = nice_to_have_score
+5. ไม่ต้องคำนวณคะแนนใดๆ — ระบบจะคำนวณคะแนนด้วย Python หลังจากนี้ (ตามสูตร 70/30)
 """
 
 
@@ -87,6 +86,41 @@ def _call_llm_with_retry(client, model, response_model, messages):
     )
 
 
+def _compute_scores_python(matches: list[SkillMatch], requirements: list) -> tuple[int, int, int]:
+    """
+    คำนวณ must_have_score, nice_to_have_score, fit_score ด้วย Python (deterministic, ไม่มี hallucination)
+    เหมือนกับสูตรใน evaluate_gold.py -> calculate_scores_python()
+    """
+    req_by_skill = {r.skill.lower(): r.priority for r in requirements}
+
+    must_have_weights, nice_to_have_weights = [], []
+
+    for m in matches:
+        weight = 1.0 if m.status == "met" else (0.5 if m.status == "partial" else 0.0)
+        m_lower = m.skill.lower()
+        priority = "must_have"  # default
+        for req_skill, prio in req_by_skill.items():
+            if req_skill in m_lower or m_lower in req_skill:
+                priority = prio
+                break
+        if priority == "must_have":
+            must_have_weights.append(weight)
+        else:
+            nice_to_have_weights.append(weight)
+
+    must = int(sum(must_have_weights) / len(must_have_weights) * 100) if must_have_weights else 0
+    nice = int(sum(nice_to_have_weights) / len(nice_to_have_weights) * 100) if nice_to_have_weights else 0
+
+    if must_have_weights and nice_to_have_weights:
+        fit = int(0.7 * must + 0.3 * nice)
+    elif must_have_weights:
+        fit = must
+    else:
+        fit = nice
+
+    return must, nice, fit
+
+
 def analyze_fit(
     resume_data: ResumeData,
     jd_data: JDData,
@@ -94,6 +128,8 @@ def analyze_fit(
 ) -> FitAnalysisResult:
     """
     รับ ResumeData + JDData -> คืนค่าเป็น FitAnalysisResult
+    LLM ทำแค่ match skill (ให้ status ทีละ skill)
+    Python คำนวณคะแนนสุดท้ายตามสูตร 70/30 เสมอ
 
     Args:
         resume_data: ผลลัพธ์จาก Resume Extractor
@@ -101,7 +137,7 @@ def analyze_fit(
         model: ชื่อโมเดล Gemini ที่จะใช้
 
     Returns:
-        FitAnalysisResult: matches + คะแนนแต่ละส่วน
+        FitAnalysisResult: matches + คะแนนแต่ละส่วน (คำนวณด้วย Python)
     """
     client = get_client()
 
@@ -115,16 +151,26 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}):
 กรุณาเทียบและให้ผลลัพธ์ตาม schema ที่กำหนด
 """
 
-    result = _call_llm_with_retry(
+    # LLM สร้างแค่ matches ไม่ต้องคำนวณคะแนน
+    llm_result = _call_llm_with_retry(
         client=client,
         model=model,
-        response_model=FitAnalysisResult,
+        response_model=LLMMatchResult,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
     )
-    return result
+
+    # Python คำนวณคะแนนตามสูตร 70/30 — deterministic, ไม่มี hallucination
+    must, nice, fit = _compute_scores_python(llm_result.matches, jd_data.requirements)
+
+    return FitAnalysisResult(
+        matches=llm_result.matches,
+        must_have_score=must,
+        nice_to_have_score=nice,
+        fit_score=fit,
+    )
 
 
 # ---------------------------------------------------------

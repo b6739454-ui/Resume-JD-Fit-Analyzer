@@ -1,0 +1,38 @@
+{
+  "fit_score": 88,
+  "must_have_score": 92,
+  "nice_to_have_score": 80,
+  "matches": [
+    {
+      "skill": "Financial planning & analysis",
+      "status": "met",
+      "evidence": "5+ years of financial planning and analysis experience in IT budget management",
+      "years_found": 5.0
+    },
+    {
+      "skill": "Sarbanes-Oxley (SOX) audit",
+      "status": "met",
+      "evidence": "Led SOX audit documentation and control testing for three consecutive fiscal years",
+      "years_found": 3.0
+    },
+    {
+      "skill": "Executive presentation",
+      "status": "partial",
+      "evidence": "Presented quarterly budget summaries to department leads",
+      "years_found": null
+    },
+    {
+      "skill": "Capital budget cycle development",
+      "status": "missing",
+      "evidence": null,
+      "years_found": null
+    }
+  ],
+  "gaps": [
+    "Capital budget cycle development"
+  ],
+  "suggested_interview_questions": [
+    "คุณเคยมีส่วนร่วมในการพัฒนา capital budget cycle ทั้งกระบวนการหรือไม่ ถ้ายัง เคยเห็นหรือเรียนรู้จากที่ไหนบ้าง"
+  ],
+  "bias_disclaimer": "รายงานนี้เป็นเครื่องมือช่วยตัดสินใจเบื้องต้นเท่านั้น ไม่ใช่การตัดสินรับ/ไม่รับที่เป็นทางการ ผู้ใช้ควรพิจารณาปัจจัยอื่นประกอบและหลีกเลี่ยงอคติในการคัดกรอง"
+}

@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schemas import ResumeData
+from agents.skill_normalizer import normalize_skill_name
 
 load_dotenv()
 
@@ -49,13 +50,15 @@ def get_client() -> instructor.Instructor:
 def extract_resume(resume_text: str, model: str = "gemini-flash-latest") -> ResumeData:
     """
     รับ resume text -> คืนค่าเป็น ResumeData ที่ผ่าน validation แล้ว
+    หลัง LLM สกัด skills ออกมาแล้ว จะ normalize ชื่อ skill ทุกตัวผ่าน
+    skill_taxonomy_master.csv (ESCO + O*NET) ก่อน return
 
     Args:
         resume_text: เนื้อหา resume แบบ plain text
         model: ชื่อโมเดล Gemini ที่จะใช้ (ค่า default คือ flash รุ่นล่าสุด)
 
     Returns:
-        ResumeData: ข้อมูลที่สกัดออกมา พร้อม evidence อ้างอิงทุก skill
+        ResumeData: ข้อมูลที่สกัดออกมา พร้อม evidence อ้างอิงทุก skill (ชื่อ skill ผ่าน normalize แล้ว)
     """
     if not resume_text or not resume_text.strip():
         raise ValueError("resume_text ว่างเปล่า — ต้องมีเนื้อหาก่อนเรียก extract")
@@ -70,6 +73,13 @@ def extract_resume(resume_text: str, model: str = "gemini-flash-latest") -> Resu
             {"role": "user", "content": f"นี่คือเนื้อหาเรซูเม่:\n\n{resume_text}"},
         ],
     )
+
+    # Normalize ชื่อ skill ทุกตัวผ่าน taxonomy มาตรฐาน (ESCO + O*NET)
+    for skill_item in result.skills:
+        norm = normalize_skill_name(skill_item.skill)
+        if norm["matched"]:
+            skill_item.skill = norm["normalized"]
+
     return result
 
 

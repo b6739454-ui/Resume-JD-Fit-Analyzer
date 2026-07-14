@@ -31,9 +31,14 @@ load_dotenv()
 # Schema เฉพาะของ agent นี้: ผลตรวจสอบทีละ match
 # ---------------------------------------------------------
 class VerifiedMatch(BaseModel):
-    skill: str = Field(..., description="ชื่อ skill ที่ตรวจสอบ")
+    skill_index: int = Field(
+        ...,
+        description="index (0-based) ของ skill match ในลำดับที่ส่งมาให้ตรวจสอบ "
+                    "ใช้ตัวเลขที่ระบุไว้ข้างหน้าแต่ละรายการ"
+    )
+    skill: str = Field(..., description="ชื่อ skill ที่ตรวจสอบ (เพื่อความชัดเจน)")
     evidence_is_valid: bool = Field(
-        ..., description="true ถ้า evidence ที่อ้างมา ปรากฏอยู่จริงในข้อความ resume ต้นฉบับ (คัดลอกตรงหรือใกล้เคียงมาก) "
+        ..., description="true ถ้า evidence ที่อ้างมา ปรากฏอยู่จริงในข้อความ resume ต้นฉบับ "
                           "false ถ้าไม่พบข้อความนี้ใน resume เลย (ถือว่าเป็นการ hallucinate)"
     )
     reason: str = Field(..., description="เหตุผลสั้นๆ ว่าทำไมถึงตัดสินแบบนี้")
@@ -49,14 +54,15 @@ SYSTEM_PROMPT = """คุณคือ Judge Agent - ด่านตรวจส�
 หน้าที่ของคุณคือตรวจสอบว่า evidence ที่แต่ละ skill match อ้างถึง มีอยู่จริงในข้อความ resume ต้นฉบับหรือไม่
 
 กฎสำคัญ (เข้มงวดมาก เพราะนี่คือด่านป้องกัน hallucination):
-1. เทียบข้อความ evidence ที่ระบุมา กับข้อความ resume ต้นฉบับที่ให้มา
-2. evidence_is_valid = true ก็ต่อเมื่อ ข้อความ evidence นั้น (หรือเนื้อความที่ตรงกันมาก) ปรากฏอยู่จริงในข้อความ resume
-3. evidence_is_valid = false ถ้า:
+1. รายการ skill match แต่ละรายการจะมีหมายเลข [index] กำกับ — ให้ตอบกลับด้วย skill_index ตัวเลขนั้นเสมอ (สำคัญมาก)
+2. เทียบข้อความ evidence ที่ระบุมา กับข้อความ resume ต้นฉบับที่ให้มา
+3. evidence_is_valid = true ก็ต่อเมื่อ ข้อความ evidence นั้น (หรือเนื้อความที่ตรงกันมาก) ปรากฏอยู่จริงในข้อความ resume
+4. evidence_is_valid = false ถ้า:
    - หาข้อความนั้นในเรซูเม่ไม่เจอเลย
    - evidence เป็นการสรุป/ตีความเกินกว่าที่ resume ระบุจริง
    - evidence เป็น null แต่ status ของ match บอกว่า "met" หรือ "partial" (ต้องมี evidence เสมอถ้าไม่ใช่ missing)
-4. ถ้า match เดิม status เป็น "missing" และ evidence เป็น null อยู่แล้ว ให้ถือว่า valid โดยอัตโนมัติ (ไม่มีอะไรต้องตรวจ)
-5. ตรวจสอบอย่างเข้มงวด ห้ามผ่อนปรน เพราะเป้าหมายคือป้องกันไม่ให้รายงานส่งข้อมูลเท็จออกไป
+5. ถ้า match เดิม status เป็น "missing" และ evidence เป็น null อยู่แล้ว ให้ถือว่า valid โดยอัตโนมัติ (ไม่มีอะไรต้องตรวจ)
+6. ตรวจสอบอย่างเข้มงวด ห้ามผ่อนปรน เพราะเป้าหมายคือป้องกันไม่ให้รายงานส่งข้อมูลเท็จออกไป
 """
 
 
@@ -96,27 +102,42 @@ def judge_matches(
     ตรวจสอบทุก match ว่า evidence มีจริงใน resume ต้นฉบับไหม
     ถ้าไม่จริง -> ปรับ match นั้นเป็น status="missing", evidence=None
 
+    การ lookup ใช้ index (ตัวเลข) ไม่ใช่ชื่อ skill string เพื่อป้องกัน
+    mismatch หลังผ่าน skill normalization
+
+    ถ้า LLM ตอบกลับ verdict ไม่ครบ — raise ValueError ทันที ไม่เดา default
+    (ตาม PRD: "Judge rejects matches without resume evidence" — ถ้าไม่รู้ ต้องรู้ ไม่ใช่เดา)
+
     Args:
         matches: ผลเทียบ skill ทั้งหมดจาก Fit Analyzer
-        original_resume_text: ข้อความ resume ต้นฉบับ (ตัวจริง ไม่ใช่ที่ผ่านการสกัดแล้ว)
+        original_resume_text: ข้อความ resume ต้นฉบับ
         model: ชื่อโมเดล Gemini ที่จะใช้
 
     Returns:
         list[SkillMatch]: matches ที่ผ่านการตรวจสอบแล้ว (ตัวที่ evidence ปลอมจะถูกแก้เป็น missing)
+
+    Raises:
+        ValueError: ถ้า LLM ตอบ verdict ไม่ครบตามจำนวน matches ที่ส่งไป
     """
     if not matches:
         return []
 
     client = get_client()
 
+    # สร้างรายการพร้อม index กำกับ เพื่อให้ LLM ตอบกลับด้วย index แทนชื่อ
+    indexed_matches = [
+        {"index": i, "skill": m.skill, "status": m.status, "evidence": m.evidence}
+        for i, m in enumerate(matches)
+    ]
+
     user_content = f"""
 ข้อความ Resume ต้นฉบับ:
 {original_resume_text}
 
-รายการ Skill Match ที่ต้องตรวจสอบ:
-{[m.model_dump() for m in matches]}
+รายการ Skill Match ที่ต้องตรวจสอบ (แต่ละรายการมี [index] กำกับ — ต้องตอบกลับครบทุกรายการด้วย skill_index ตัวนั้น):
+{indexed_matches}
 
-กรุณาตรวจสอบทีละรายการ และให้ผลลัพธ์ตาม schema ที่กำหนด
+กรุณาตรวจสอบทีละรายการ และให้ผลลัพธ์ตาม schema ที่กำหนด (ครบ {len(matches)} รายการ)
 """
 
     judge_result = _call_llm_with_retry(
@@ -129,11 +150,24 @@ def judge_matches(
         ],
     )
 
-    verdict_by_skill = {v.skill: v.evidence_is_valid for v in judge_result.verified_matches}
+    # ตรวจสอบความครบถ้วนก่อนใช้ผลลัพธ์ — ไม่เดา default ไม่ว่าทิศทางไหน
+    n_expected = len(matches)
+    n_returned = len(judge_result.verified_matches)
+    if n_returned != n_expected:
+        raise ValueError(
+            f"Judge Agent ตอบกลับไม่ครบ: ส่งไป {n_expected} รายการ "
+            f"แต่ได้ verdict กลับมาแค่ {n_returned} รายการ "
+            f"— ต้อง retry ไม่ใช่เดา default"
+        )
+
+    # Build lookup ด้วย index — ชื่อ skill ไม่ต้องตรงเป๊ะ
+    verdict_by_index: dict[int, bool] = {}
+    for v in judge_result.verified_matches:
+        verdict_by_index[v.skill_index] = v.evidence_is_valid
 
     corrected_matches: list[SkillMatch] = []
-    for m in matches:
-        is_valid = verdict_by_skill.get(m.skill, False)
+    for i, m in enumerate(matches):
+        is_valid = verdict_by_index.get(i, False)  # ถ้า index หายไปจาก dict (จำนวนครบแล้วแต่ index ผิด) → conservative
         if is_valid:
             corrected_matches.append(m)
         else:

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 # Ensure we can import agents
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from agents.skill_normalizer import normalize_skill_name
 from agents.resume_extractor import extract_resume
 from agents.jd_extractor import extract_jd
 from agents.fit_analyzer import analyze_fit
@@ -76,9 +77,23 @@ def find_matching_requirement(gold_skill: str, requirements: list[SkillRequireme
     return None
 
 
+def skills_match(gold_skill: str, pred_skill: str, threshold: float = 0.6) -> bool:
+    """
+    เทียบความหมายของชื่อ skill สองตัวด้วย embedding similarity โดยตรง (cosine)
+    ไม่ผ่าน canonical mapping — ตัดปัญหา "map ไปคนละ canonical" ออกไปเลย
+    เพราะเทียบความหมายตรงๆ ไม่ผ่านตัวกลาง
+    """
+    from agents.skill_normalizer import _normalizer
+    _normalizer._lazy_load()
+    emb_gold = _normalizer.model.encode([gold_skill], normalize_embeddings=True)
+    emb_pred = _normalizer.model.encode([pred_skill], normalize_embeddings=True)
+    similarity = float(emb_gold[0] @ emb_pred[0])
+    return similarity >= threshold
+
+
 def main():
-    workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    gold_path = os.path.join(workspace_root, "gold_dataset_final.json")
+    # ใช้ไฟล์ที่อยู่ใน tests/ โดยตรง (เก็บที่เดียว ไม่ซ้ำ)
+    gold_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gold_dataset_final.json")
     if not os.path.exists(gold_path):
         print(f"❌ ไม่พบไฟล์ gold dataset ใน: {gold_path}")
         return
@@ -135,20 +150,27 @@ def main():
             # Evaluate match accuracy & unsupported claims
             # Let's map each gold match to predicted verified matches
             for gold_m in item["gold_matches"]:
-                gold_skill = gold_m["skill"]
+                gold_skill_raw = gold_m["skill"]
                 gold_status = gold_m["status"]
-                
+
+                # Normalize gold skill name ດ้วย taxonomy เดียวกัน เพื่อให้ชื่อตรงกัน
+                norm_gold = normalize_skill_name(gold_skill_raw)
+                gold_skill = norm_gold["normalized"] if norm_gold["matched"] else gold_skill_raw
+
                 # Check priority of this gold skill based on JD Extractor
                 matched_req = find_matching_requirement(gold_skill, jd_data.requirements)
                 priority = matched_req.priority if matched_req else "must_have"
                 
                 # Find the predicted status from verified_matches
+                # ใช้ embedding similarity แทน substring match —
+                # เทียบความหมายตรงๆ ไม่ผ่าน canonical mapping
                 pred_match = None
+                best_sim = 0.0
                 for pm in verified_matches:
-                    if pm.skill.lower() in gold_skill.lower() or gold_skill.lower() in pm.skill.lower():
+                    if skills_match(gold_skill, pm.skill, threshold=0.60):
                         pred_match = pm
                         break
-                
+
                 pred_status = pred_match.status if pred_match else "missing"
                 
                 is_correct = (pred_status == gold_status)
@@ -162,13 +184,13 @@ def main():
                         nice_to_have_correct += 1
 
             # Count unsupported claims
-            # Find claims (met/partial) from original Fit Analyzer that were changed to missing by Judge Agent
-            original_matches_by_skill = {m.skill.lower(): m.status for m in fit_result.matches}
-            for pm in verified_matches:
-                orig_status = original_matches_by_skill.get(pm.skill.lower(), "missing")
-                if orig_status in ("met", "partial"):
+            # ใช้ index แทน string key — เพราะหลัง normalize ชื่อ skill อาจเปลี่ยนไป
+            # verified_matches มีจำนวนเท่ากับ fit_result.matches เสมอ (ผ่าน judge แล้ว
+            # judge อาจเปลี่ยน status แต่ไม่เพิ่ม/ลบ item) -> เทียบด้วย index ตรงได้เลย
+            for idx, (orig_m, verified_m) in enumerate(zip(fit_result.matches, verified_matches)):
+                if orig_m.status in ("met", "partial"):
                     total_claims_count += 1
-                    if pm.status == "missing":
+                    if verified_m.status == "missing":
                         unsupported_claims_count += 1
 
             results.append({
