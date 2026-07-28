@@ -2,6 +2,7 @@ import os
 import json
 import sys
 import time
+import argparse
 from dotenv import load_dotenv
 
 # Ensure we can import agents
@@ -17,83 +18,81 @@ from schemas import SkillMatch, SkillRequirement
 
 load_dotenv()
 
-# Deterministic Python scoring function
+# Deterministic Python scoring function — index-based
 def calculate_scores_python(matches: list[SkillMatch], requirements: list[SkillRequirement]) -> tuple[int, int, int]:
-    req_by_skill = {r.skill.lower(): r.priority for r in requirements}
-    
-    must_have_matches = []
-    nice_to_have_matches = []
-    
-    for m in matches:
-        priority = "must_have"
-        m_skill_lower = m.skill.lower()
-        
-        # Check closest requirement
-        for req_skill, prio in req_by_skill.items():
-            if req_skill in m_skill_lower or m_skill_lower in req_skill:
-                priority = prio
-                break
-        
+    if len(matches) != len(requirements):
+        raise ValueError(
+            f"matches ({len(matches)}) กับ requirements ({len(requirements)}) จำนวนไม่เท่ากัน "
+            f"— ไม่ควรเกิดขึ้นถ้า pipeline ก่อนหน้าตรวจสอบไปแล้ว"
+        )
+
+    must_have_weights: list[float] = []
+    nice_to_have_weights: list[float] = []
+
+    for m, req in zip(matches, requirements):
         weight = 1.0 if m.status == "met" else (0.5 if m.status == "partial" else 0.0)
-        if priority == "must_have":
-            must_have_matches.append(weight)
+        if req.priority == "must_have":
+            must_have_weights.append(weight)
         else:
-            nice_to_have_matches.append(weight)
-            
-    must_have_score = int((sum(must_have_matches) / len(must_have_matches) * 100)) if must_have_matches else 0
-    nice_to_have_score = int((sum(nice_to_have_matches) / len(nice_to_have_matches) * 100)) if nice_to_have_matches else 0
-    
-    if must_have_matches and nice_to_have_matches:
-        fit_score = int(0.7 * must_have_score + 0.3 * nice_to_have_score)
-    elif must_have_matches:
-        fit_score = must_have_score
+            nice_to_have_weights.append(weight)
+
+    must = int(sum(must_have_weights) / len(must_have_weights) * 100) if must_have_weights else 0
+    nice = int(sum(nice_to_have_weights) / len(nice_to_have_weights) * 100) if nice_to_have_weights else 0
+
+    if must_have_weights and nice_to_have_weights:
+        fit = int(0.7 * must + 0.3 * nice)
+    elif must_have_weights:
+        fit = must
     else:
-        fit_score = nice_to_have_score
-        
-    return must_have_score, nice_to_have_score, fit_score
+        fit = nice
+
+    return must, nice, fit
 
 
-# Client-side retry wrapper for agent calls to handle rate limit (429) & unavailable (503) errors
+# Client-side retry wrapper for agent calls to handle rate limit (429), unavailable (503) & timeout errors
 def call_agent_with_retry(agent_fn, *args, **kwargs):
-    max_attempts = 5
+    max_attempts = 10
     for attempt in range(max_attempts):
         try:
             return agent_fn(*args, **kwargs)
         except Exception as e:
             err_str = str(e).lower()
-            if "429" in err_str or "resource_exhausted" in err_str or "503" in err_str or "unavailable" in err_str:
+            if any(k in err_str for k in ("429", "resource_exhausted", "quota")):
+                raise e
+            elif any(k in err_str for k in ("503", "unavailable", "timeout", "timed out")):
                 wait_time = 10 * (attempt + 1)
-                print(f"  ⚠️ Hit rate limit or service unavailable. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_attempts})")
+                print(f"  ⚠️ Server transient error ({err_str[:60]}...). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_attempts})", flush=True)
                 time.sleep(wait_time)
             else:
                 raise e
-    raise RuntimeError("Failed to complete agent call after maximum retries due to rate limits.")
+    raise RuntimeError("Failed to complete agent call after maximum retries due to rate limits or timeouts.")
 
 
 def find_matching_requirement(gold_skill: str, requirements: list[SkillRequirement]) -> SkillRequirement | None:
-    for req in requirements:
-        if req.skill.lower() in gold_skill.lower() or gold_skill.lower() in req.skill.lower():
-            return req
-    return None
-
-
-def skills_match(gold_skill: str, pred_skill: str, threshold: float = 0.6) -> bool:
-    """
-    เทียบความหมายของชื่อ skill สองตัวด้วย embedding similarity โดยตรง (cosine)
-    ไม่ผ่าน canonical mapping — ตัดปัญหา "map ไปคนละ canonical" ออกไปเลย
-    เพราะเทียบความหมายตรงๆ ไม่ผ่านตัวกลาง
-    """
     from agents.skill_normalizer import _normalizer
     _normalizer._lazy_load()
-    emb_gold = _normalizer.model.encode([gold_skill], normalize_embeddings=True)
-    emb_pred = _normalizer.model.encode([pred_skill], normalize_embeddings=True)
-    similarity = float(emb_gold[0] @ emb_pred[0])
-    return similarity >= threshold
+    emb_gold = _normalizer.model.encode([gold_skill], normalize_embeddings=True)[0]
+
+    best_req = None
+    best_sim = -1.0
+    for req in requirements:
+        emb_req = _normalizer.model.encode([req.skill], normalize_embeddings=True)[0]
+        sim = float(emb_gold @ emb_req)
+        if sim > best_sim:
+            best_sim = sim
+            best_req = req
+    return best_req if best_sim >= 0.4 else None
 
 
 def main():
-    # ใช้ไฟล์ที่อยู่ใน tests/ โดยตรง (เก็บที่เดียว ไม่ซ้ำ)
+    parser = argparse.ArgumentParser(description="Run evaluation against Gold Dataset")
+    parser.add_argument("--api-key-env", type=str, default="GOOGLE_API_KEY", help="Environment variable name for GOOGLE_API_KEY")
+    args = parser.parse_args()
+    api_key_env = args.api_key_env
+
     gold_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gold_dataset_final.json")
+    progress_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "evaluation_progress.json")
+
     if not os.path.exists(gold_path):
         print(f"❌ ไม่พบไฟล์ gold dataset ใน: {gold_path}")
         return
@@ -102,11 +101,13 @@ def main():
         dataset = json.load(f)
 
     print(f"=== เริ่มการประเมินผลตัวอย่างจำนวน {len(dataset)} รายการ ===")
-    print("โมเดลหลักที่ใช้: gemini-flash-lite-latest")
-    print("ระบบจะเพิ่มความหน่วงเวลา 3 วินาทีระหว่าง API call เพื่อหลีกเลี่ยง Rate Limit 15 RPM\n")
+    print("โมเดลหลักที่ใช้: gemini-flash-latest (โมเดลเต็ม)")
+    print(f"API Key Environment Variable: {api_key_env}")
+    print("ระบบจะเพิ่มความหน่วงเวลา 2 วินาทีระหว่าง API call\n")
 
-    model_name = "gemini-flash-lite-latest"
+    model_name = "gemini-flash-latest"
     results = []
+    failed_pairs = []
 
     # Metrics counters
     unsupported_claims_count = 0
@@ -118,58 +119,101 @@ def main():
     nice_to_have_correct = 0
     nice_to_have_total = 0
 
+    # Load progress if exists
+    if os.path.exists(progress_path):
+        try:
+            with open(progress_path, 'r', encoding='utf-8') as pf:
+                progress_data = json.load(pf)
+                results = progress_data.get("results", [])
+                failed_pairs = progress_data.get("failed_pairs", [])
+                must_have_correct = progress_data.get("must_have_correct", 0)
+                must_have_total = progress_data.get("must_have_total", 0)
+                nice_to_have_correct = progress_data.get("nice_to_have_correct", 0)
+                nice_to_have_total = progress_data.get("nice_to_have_total", 0)
+                unsupported_claims_count = progress_data.get("unsupported_claims_count", 0)
+                total_claims_count = progress_data.get("total_claims_count", 0)
+            print(f"📂 พบไฟล์ evaluation_progress.json — โหลดผลลัพธ์เดิมที่สำเร็จแล้ว {len(results)}/{len(dataset)} รายการ", flush=True)
+        except Exception as pe:
+            print(f"⚠️ อ่านไฟล์ evaluation_progress.json ไม่สำเร็จ ({pe}) — เริ่มรันใหม่ทั้งหมด", flush=True)
+
+    completed_pair_ids = {r["pair_id"] for r in results}
+
+    def save_progress():
+        prog_data = {
+            "results": results,
+            "failed_pairs": failed_pairs,
+            "must_have_correct": must_have_correct,
+            "must_have_total": must_have_total,
+            "nice_to_have_correct": nice_to_have_correct,
+            "nice_to_have_total": nice_to_have_total,
+            "unsupported_claims_count": unsupported_claims_count,
+            "total_claims_count": total_claims_count,
+        }
+        with open(progress_path, 'w', encoding='utf-8') as pf:
+            json.dump(prog_data, pf, indent=2, ensure_ascii=False)
+
     for item in dataset:
         pair_id = item["pair_id"]
         role = item["target_role"]
-        print(f"กำลังรัน: {pair_id} ({role})...")
+
+        if pair_id in completed_pair_ids:
+            print(f"⏭️ {pair_id} ({role}) โหลดจาก progress cache เรียบร้อย (ข้าม LLM call)", flush=True)
+            continue
+
+        print(f"กำลังรัน: {pair_id} ({role})...", flush=True)
         
         try:
             # 1. Resume Extractor
-            resume_data = call_agent_with_retry(extract_resume, item["resume_text"], model=model_name)
-            time.sleep(3)
+            resume_data = call_agent_with_retry(extract_resume, item["resume_text"], model=model_name, api_key_env_var=api_key_env)
+            print(f"  [1/5] Resume Extractor done", flush=True)
+            time.sleep(2)
             
             # 2. JD Extractor
-            jd_data = call_agent_with_retry(extract_jd, item["jd_text"], model=model_name)
-            time.sleep(3)
+            jd_data = call_agent_with_retry(extract_jd, item["jd_text"], model=model_name, api_key_env_var=api_key_env)
+            print(f"  [2/5] JD Extractor done ({len(jd_data.requirements)} reqs)", flush=True)
+            time.sleep(2)
             
             # 3. Fit Analyzer
-            fit_result = call_agent_with_retry(analyze_fit, resume_data, jd_data, model=model_name)
-            time.sleep(3)
+            fit_result = call_agent_with_retry(analyze_fit, resume_data, jd_data, model=model_name, api_key_env_var=api_key_env)
+            print(f"  [3/5] Fit Analyzer done", flush=True)
+            time.sleep(2)
             
             # 4. Gap Agent
-            gap_result = call_agent_with_retry(analyze_gaps, fit_result.matches, model=model_name)
-            time.sleep(3)
+            gap_result = call_agent_with_retry(analyze_gaps, fit_result.matches, model=model_name, api_key_env_var=api_key_env)
+            print(f"  [4/5] Gap Agent done", flush=True)
+            time.sleep(2)
             
             # 5. Judge Agent (Verify matches)
-            verified_matches = call_agent_with_retry(judge_matches, fit_result.matches, item["resume_text"], model=model_name)
-            time.sleep(3)
+            verified_matches = call_agent_with_retry(judge_matches, fit_result.matches, item["resume_text"], model=model_name, api_key_env_var=api_key_env)
+            print(f"  [5/5] Judge Agent done", flush=True)
+            time.sleep(2)
             
             # 6. Calculate verified Python score
             py_must, py_nice, py_fit = calculate_scores_python(verified_matches, jd_data.requirements)
 
             # Evaluate match accuracy & unsupported claims
-            # Let's map each gold match to predicted verified matches
             for gold_m in item["gold_matches"]:
                 gold_skill_raw = gold_m["skill"]
                 gold_status = gold_m["status"]
 
-                # Normalize gold skill name ດ้วย taxonomy เดียวกัน เพื่อให้ชื่อตรงกัน
                 norm_gold = normalize_skill_name(gold_skill_raw)
                 gold_skill = norm_gold["normalized"] if norm_gold["matched"] else gold_skill_raw
 
-                # Check priority of this gold skill based on JD Extractor
                 matched_req = find_matching_requirement(gold_skill, jd_data.requirements)
                 priority = matched_req.priority if matched_req else "must_have"
                 
-                # Find the predicted status from verified_matches
-                # ใช้ embedding similarity แทน substring match —
-                # เทียบความหมายตรงๆ ไม่ผ่าน canonical mapping
+                from agents.skill_normalizer import _normalizer
+                _normalizer._lazy_load()
+                emb_gold = _normalizer.model.encode([gold_skill], normalize_embeddings=True)[0]
+
                 pred_match = None
-                best_sim = 0.0
+                best_pred_sim = -1.0
                 for pm in verified_matches:
-                    if skills_match(gold_skill, pm.skill, threshold=0.60):
+                    emb_pm = _normalizer.model.encode([pm.skill], normalize_embeddings=True)[0]
+                    sim = float(emb_gold @ emb_pm)
+                    if sim >= 0.60 and sim > best_pred_sim:
+                        best_pred_sim = sim
                         pred_match = pm
-                        break
 
                 pred_status = pred_match.status if pred_match else "missing"
                 
@@ -183,10 +227,6 @@ def main():
                     if is_correct:
                         nice_to_have_correct += 1
 
-            # Count unsupported claims
-            # ใช้ index แทน string key — เพราะหลัง normalize ชื่อ skill อาจเปลี่ยนไป
-            # verified_matches มีจำนวนเท่ากับ fit_result.matches เสมอ (ผ่าน judge แล้ว
-            # judge อาจเปลี่ยน status แต่ไม่เพิ่ม/ลบ item) -> เทียบด้วย index ตรงได้เลย
             for idx, (orig_m, verified_m) in enumerate(zip(fit_result.matches, verified_matches)):
                 if orig_m.status in ("met", "partial"):
                     total_claims_count += 1
@@ -205,10 +245,23 @@ def main():
                 "pred_py_nice": py_nice,
                 "pred_py_fit": py_fit,
             })
-            print(f"✅ {pair_id} เสร็จเรียบร้อย (Must={py_must}, Nice={py_nice}, Fit={py_fit})")
+            completed_pair_ids.add(pair_id)
+            save_progress()
+            print(f"✅ {pair_id} เสร็จเรียบร้อย (Must={py_must}, Nice={py_nice}, Fit={py_fit}) [บันทึก progress แล้ว]", flush=True)
         except Exception as e:
-            print(f"❌ {pair_id} เกิดข้อผิดพลาด: {type(e).__name__} -> {str(e)}")
-            time.sleep(10)
+            err_msg = f"{type(e).__name__}: {str(e)}"
+            err_str = str(e).lower()
+            if any(k in err_str for k in ("429", "resource_exhausted", "quota", "max retries exceeded")):
+                print(f"\n🛑 หยุดการทำงานชั่วคราวเนื่องจากชน Quota/Rate Limit ที่ {pair_id}: {err_msg}", flush=True)
+                print(f"   รันสำเร็จแล้ว {len(results)}/{len(dataset)} คู่ (เก็บไว้ใน evaluation_progress.json แล้ว)", flush=True)
+                print(f"   รันคำสั่งเดิมซ้ำได้เมื่อ quota รีเซ็ต จะรันต่อจากคู่ที่ {len(results)+1} อัตโนมัติ", flush=True)
+                save_progress()
+                return
+            else:
+                print(f"❌ {pair_id} เกิดข้อผิดพลาด: {err_msg} — ข้ามคู่นี้ในการคำนวณ", flush=True)
+                failed_pairs.append({"pair_id": pair_id, "error": err_msg})
+                save_progress()
+                time.sleep(5)
 
     # Calculate overall metrics
     must_have_acc = (must_have_correct / must_have_total * 100) if must_have_total > 0 else 0
@@ -232,7 +285,13 @@ def main():
         print(f"{r['pair_id']:<10} | {must_str:<25} | {nice_str:<25} | {fit_str:<25}")
     print("="*95)
 
+    if failed_pairs:
+        print(f"\n⚠️ มี {len(failed_pairs)} คู่ที่ไม่สามารถประมวลผลได้สำเร็จ:")
+        for fp in failed_pairs:
+            print(f"   - {fp['pair_id']}: {fp['error']}")
+
     print("\n📊 === รายงานผลลัพธ์การประเมิน (Evaluation Metrics Report) ===")
+    print(f"ประมวลผลสำเร็จ: {len(results)} / {len(dataset)} รายการ")
     print(f"1. Must-Have Match Accuracy: {must_have_acc:.2f}% (เป้าหมาย: >= 80%)")
     print(f"2. Nice-To-Have Match Accuracy: {nice_to_have_acc:.2f}%")
     print(f"3. Unsupported Match Claims Rate: {unsupported_rate:.2f}% (เป้าหมาย: <= 10%)")
@@ -244,6 +303,8 @@ def main():
 
     # Save to JSON
     report_data = {
+        "n_pairs_completed": f"{len(results)} / {len(dataset)}",
+        "failed_pairs": failed_pairs,
         "metrics": {
             "must_have_match_accuracy_pct": must_have_acc,
             "nice_to_have_match_accuracy_pct": nice_to_have_acc,
@@ -259,6 +320,9 @@ def main():
     with open(report_output_path, 'w', encoding='utf-8') as f:
         json.dump(report_data, f, indent=2, ensure_ascii=False)
     print(f"Saved evaluation report to: {report_output_path}")
+
+    # Keep evaluation_progress.json updated as backup
+    save_progress()
 
 if __name__ == "__main__":
     main()

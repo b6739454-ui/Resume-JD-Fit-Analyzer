@@ -56,22 +56,31 @@ SYSTEM_PROMPT = """คุณคือ Judge Agent - ด่านตรวจส�
 กฎสำคัญ (เข้มงวดมาก เพราะนี่คือด่านป้องกัน hallucination):
 1. รายการ skill match แต่ละรายการจะมีหมายเลข [index] กำกับ — ให้ตอบกลับด้วย skill_index ตัวเลขนั้นเสมอ (สำคัญมาก)
 2. เทียบข้อความ evidence ที่ระบุมา กับข้อความ resume ต้นฉบับที่ให้มา
-3. evidence_is_valid = true ก็ต่อเมื่อ ข้อความ evidence นั้น (หรือเนื้อความที่ตรงกันมาก) ปรากฏอยู่จริงในข้อความ resume
+3. evidence_is_valid = true ก็ต่อเมื่อ evidence นั้นปรากฏอยู่จริงในข้อความ resume และมีเนื้อหาสาระเฉพาะเจาะจง
+   - อนุญาตให้ evidence มาจากส่วน Summary / Objective ได้ หากเป็นประโยคที่มีรายละเอียดเฉพาะเจาะจง (เช่น จำนวนปีประสบการณ์, ทักษะเฉพาะที่ระบุชื่อชัดเจน, คำอธิบายบทบาท)
+   - ตัวอย่างที่ยอมรับได้: "Energetic, Bilingual Human Resources Professional offering ~11 years of extensive and successful experience administering various HR plans" (มีรายละเอียดเฉพาะเจาะจง: bilingual, 11 ปี, HR plans — ไม่ใช่ keyword โดดๆ)
 4. evidence_is_valid = false ถ้า:
    - หาข้อความนั้นในเรซูเม่ไม่เจอเลย
+   - evidence เป็นเพียงชื่อ skill / เทคโนโลยีโดดๆ ที่คัดลอกมาจาก list แบบ "Skills: A, B, C" โดยไม่มีคำกริยาแสดงการกระทำ และไม่มีรายละเอียดเฉพาะเจาะจงใดๆ ประกอบ
+     (ตัวอย่างที่ต้อง reject ทันที: "C#", "ASP.NET", "TFS", "Python", "Oracle SQL" ที่ปรากฏแค่ในรายการคำสั้นๆ ลอยๆ โดยไม่มีบริบท)
    - evidence เป็นการสรุป/ตีความเกินกว่าที่ resume ระบุจริง
    - evidence เป็น null แต่ status ของ match บอกว่า "met" หรือ "partial" (ต้องมี evidence เสมอถ้าไม่ใช่ missing)
-5. ถ้า match เดิม status เป็น "missing" และ evidence เป็น null อยู่แล้ว ให้ถือว่า valid โดยอัตโนมัติ (ไม่มีอะไรต้องตรวจ)
-6. ตรวจสอบอย่างเข้มงวด ห้ามผ่อนปรน เพราะเป้าหมายคือป้องกันไม่ให้รายงานส่งข้อมูลเท็จออกไป
+5. หลักการตัดสิน: ตัดสินจาก "เนื้อหาของประโยคมีสาระเฉพาะเจาะจงหรือเป็นแค่รายการคำโดดๆ" ไม่ใช่ตัดสินจาก "ประโยคนี้อยู่ในหัวข้อไหนของ resume"
+6. ถ้า match เดิม status เป็น "missing" และ evidence เป็น null อยู่แล้ว ให้ถือว่า valid โดยอัตโนมัติ (ไม่มีอะไรต้องตรวจ)
+7. ตรวจสอบอย่างเข้มงวด ห้ามผ่อนปรน เพราะเป้าหมายคือป้องกันไม่ให้รายงานส่งข้อมูลเท็จออกไป
 """
 
 
-def get_client() -> instructor.Instructor:
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("ไม่เจอ GOOGLE_API_KEY ใน .env — เช็คไฟล์ .env ก่อน")
+import httpx
 
-    genai_client = genai.Client(api_key=api_key)
+
+def get_client(api_key_env_var: str = "GOOGLE_API_KEY") -> instructor.Instructor:
+    api_key = os.getenv(api_key_env_var)
+    if not api_key:
+        raise ValueError(f"ไม่เจอ {api_key_env_var} ใน .env — เช็คไฟล์ .env ก่อน")
+
+    httpx_client = httpx.Client(http2=False, timeout=60.0)
+    genai_client = genai.Client(api_key=api_key, http_options={"httpx_client": httpx_client})
     client = instructor.from_genai(
         genai_client,
         mode=instructor.Mode.GENAI_TOOLS,
@@ -97,6 +106,7 @@ def judge_matches(
     matches: list[SkillMatch],
     original_resume_text: str,
     model: str = "gemini-flash-latest",
+    api_key_env_var: str = "GOOGLE_API_KEY",
 ) -> list[SkillMatch]:
     """
     ตรวจสอบทุก match ว่า evidence มีจริงใน resume ต้นฉบับไหม
@@ -122,7 +132,7 @@ def judge_matches(
     if not matches:
         return []
 
-    client = get_client()
+    client = get_client(api_key_env_var)
 
     # สร้างรายการพร้อม index กำกับ เพื่อให้ LLM ตอบกลับด้วย index แทนชื่อ
     indexed_matches = [

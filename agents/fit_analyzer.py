@@ -41,28 +41,36 @@ class FitAnalysisResult(BaseModel):
 
 
 SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ความเหมาะสม (Fit Analyzer)
-คุณจะได้รับข้อมูล 2 ส่วน: (1) ข้อมูลที่สกัดจาก resume และ (2) รายการ skill requirement จาก JD
+คุณจะได้รับข้อมูล 2 ส่วน: (1) ข้อมูลที่สกัดจาก resume และ (2) รายการ skill requirement จาก JD พร้อม [index] กำกับ
 หน้าที่ของคุณคือเทียบทีละ skill requirement กับข้อมูลใน resume แล้วให้ผลลัพธ์ตาม schema (เฉพาะ matches ไม่ต้องคำนวณคะแนน)
 
 กฎสำคัญ:
-1. เทียบ skill requirement ทุกตัวจาก JD กับ skills/work_experience ใน resume
+1. requirements แต่ละตัวมี [index] กำกับ — ต้องตอบ matches ครบทุกตัว เรียงตาม index เดียวกันเป๊ะ (สำคัญมาก — ระบบใช้ index จับคู่)
 2. status ของแต่ละ match ให้เลือกจาก:
-   - "met" = resume มี skill นี้ชัดเจน และปีประสบการณ์ (ถ้า JD กำหนด) เพียงพอหรือไม่ได้กำหนด
-   - "partial" = resume มี skill ที่เกี่ยวข้อง/ใกล้เคียง แต่ไม่ตรงเป๊ะ หรือมีประสบการณ์ไม่ถึงที่กำหนด
-   - "missing" = ไม่พบ skill นี้ หรือสิ่งที่เกี่ยวข้องใน resume เลย
-3. evidence ต้องคัดลอกมาจาก evidence ที่มีอยู่แล้วใน resume data เท่านั้น ห้ามแต่งขึ้นเอง
+   - "met" = resume มีประโยคบริบทที่แสดงว่าใช้ skill นี้จริง (ใน work_experience หรือ education) และปีประสบการณ์ (ถ้า JD กำหนด) เพียงพอ
+   - "partial" = resume มีชื่อ skill ใน skills list เท่านั้น (ไม่มีประโยคบริบทรองรับ) หรือมี skill ที่เกี่ยวข้องแต่ไม่ตรง หรือประสบการณ์ไม่ถึงที่กำหนด
+   - "missing" = ไม่พบ skill นี้หรือสิ่งที่เกี่ยวข้องใน resume เลย
+3. evidence ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง คัดลอกมาจาก work_experience หรือ education เท่านั้น
+   ห้ามใช้แค่ชื่อ skill โดดๆ จาก skills list เป็น evidence (เช่น ห้ามใช้ "Python" หรือ "ASP.NET" โดดๆ)
+   ถ้า skill ปรากฏเฉพาะใน skills list และไม่มีประโยคบริบทจาก work_experience/education รองรับ:
+   → evidence = null และ status = "partial" (ไม่ใช่ "met")
    ถ้า status เป็น "missing" ให้ evidence เป็น null
 4. years_found ใส่ตามข้อมูลจริงที่พบใน resume สำหรับ skill นั้น ถ้าไม่มีให้เป็น null
-5. ไม่ต้องคำนวณคะแนนใดๆ — ระบบจะคำนวณคะแนนด้วย Python หลังจากนี้ (ตามสูตร 70/30)
+5. ต้องตอบ matches ครบทุก requirement (จำนวนเท่ากับ requirements ที่ส่งมา ไม่เพิ่มไม่ลด) — ไม่ต้องคำนวณคะแนนใดๆ
 """
 
 
-def get_client() -> instructor.Instructor:
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("ไม่เจอ GOOGLE_API_KEY ใน .env — เช็คไฟล์ .env ก่อน")
 
-    genai_client = genai.Client(api_key=api_key)
+import httpx
+
+
+def get_client(api_key_env_var: str = "GOOGLE_API_KEY") -> instructor.Instructor:
+    api_key = os.getenv(api_key_env_var)
+    if not api_key:
+        raise ValueError(f"ไม่เจอ {api_key_env_var} ใน .env — เช็คไฟล์ .env ก่อน")
+
+    httpx_client = httpx.Client(http2=False, timeout=60.0)
+    genai_client = genai.Client(api_key=api_key, http_options={"httpx_client": httpx_client})
     client = instructor.from_genai(
         genai_client,
         mode=instructor.Mode.GENAI_TOOLS,
@@ -88,22 +96,25 @@ def _call_llm_with_retry(client, model, response_model, messages):
 
 def _compute_scores_python(matches: list[SkillMatch], requirements: list) -> tuple[int, int, int]:
     """
-    คำนวณ must_have_score, nice_to_have_score, fit_score ด้วย Python (deterministic, ไม่มี hallucination)
-    เหมือนกับสูตรใน evaluate_gold.py -> calculate_scores_python()
+    คำนวณ must_have_score, nice_to_have_score, fit_score ด้วย Python (deterministic)
+    จับคู่ matches[i] กับ requirements[i] ด้วย index ตรง — ไม่มี substring matching
+    เป็นไปได้ต่อเมื่อ LLM ตอบครบทุก requirement เรียงตาม index
     """
-    req_by_skill = {r.skill.lower(): r.priority for r in requirements}
+    if not matches or not requirements:
+        return 0, 0, 0
 
-    must_have_weights, nice_to_have_weights = [], []
+    must_have_weights: list[float] = []
+    nice_to_have_weights: list[float] = []
 
-    for m in matches:
-        weight = 1.0 if m.status == "met" else (0.5 if m.status == "partial" else 0.0)
-        m_lower = m.skill.lower()
-        priority = "must_have"  # default
-        for req_skill, prio in req_by_skill.items():
-            if req_skill in m_lower or m_lower in req_skill:
-                priority = prio
-                break
-        if priority == "must_have":
+    # จับคู่ด้วย index ตรง matches[i] ↔ requirements[i]
+    for i, req in enumerate(requirements):
+        if i < len(matches):
+            weight = 1.0 if matches[i].status == "met" else (0.5 if matches[i].status == "partial" else 0.0)
+        else:
+            # LLM ตอบไม่ครบ (validate จะหยุดก่อนถึงตรงนี้เสมอ) — conservative fallback
+            weight = 0.0
+
+        if req.priority == "must_have":
             must_have_weights.append(weight)
         else:
             nice_to_have_weights.append(weight)
@@ -125,10 +136,11 @@ def analyze_fit(
     resume_data: ResumeData,
     jd_data: JDData,
     model: str = "gemini-flash-latest",
+    api_key_env_var: str = "GOOGLE_API_KEY",
 ) -> FitAnalysisResult:
     """
     รับ ResumeData + JDData -> คืนค่าเป็น FitAnalysisResult
-    LLM ทำแค่ match skill (ให้ status ทีละ skill)
+    LLM ทำแค่ match skill (ให้ status ทีละ skill) เรียงตาม index เดียวกับ requirements
     Python คำนวณคะแนนสุดท้ายตามสูตร 70/30 เสมอ
 
     Args:
@@ -138,17 +150,26 @@ def analyze_fit(
 
     Returns:
         FitAnalysisResult: matches + คะแนนแต่ละส่วน (คำนวณด้วย Python)
+
+    Raises:
+        ValueError: ถ้า LLM ตอบ matches ไม่ครบตามจำนวน requirements ที่ส่งไป
     """
-    client = get_client()
+    client = get_client(api_key_env_var)
+
+    # เพิ่ม index กำกับใน prompt — บังคับให้ LLM ตอบตาม index เดียวกับนี้เป๊ะ
+    indexed_requirements = [
+        {"index": i, **r.model_dump()}
+        for i, r in enumerate(jd_data.requirements)
+    ]
 
     user_content = f"""
 ข้อมูลจาก Resume:
 {resume_data.model_dump_json(indent=2, ensure_ascii=False)}
 
-Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}):
-{[r.model_dump() for r in jd_data.requirements]}
+Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) — ต้องตอบ matches เรียงตาม [index] เป๊ะ ครบ {len(indexed_requirements)} รายการ:
+{indexed_requirements}
 
-กรุณาเทียบและให้ผลลัพธ์ตาม schema ที่กำหนด
+กรุณาเทียบทุก requirement และให้ผลลัพธ์ matches ครบ {len(indexed_requirements)} ตัว เรียงตามลำดับ index เดียวกันเป๊ะ
 """
 
     # LLM สร้างแค่ matches ไม่ต้องคำนวณคะแนน
@@ -162,7 +183,17 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}):
         ],
     )
 
-    # Python คำนวณคะแนนตามสูตร 70/30 — deterministic, ไม่มี hallucination
+    # Validate ความครบถ้วน — ไม่เดา default ไม่ว่าทิศทางไหน
+    n_expected = len(jd_data.requirements)
+    n_returned = len(llm_result.matches)
+    if n_returned != n_expected:
+        raise ValueError(
+            f"Fit Analyzer ตอบ matches ไม่ครบ: ส่งไป {n_expected} requirements "
+            f"แต่ได้ matches กลับมาแค่ {n_returned} ตัว "
+            f"— ต้อง retry ไม่ใช่เดา"
+        )
+
+    # Python คำนวณคะแนนตามสูตร 70/30 — index-based, deterministic
     must, nice, fit = _compute_scores_python(llm_result.matches, jd_data.requirements)
 
     return FitAnalysisResult(

@@ -103,6 +103,8 @@ Short version: `Resume Extractor` + `JD Extractor` → `Fit Analyzer` →
 
 ## Evaluation
 
+> **Model Requirement**: The pipeline **MUST use `gemini-flash-latest`** (full model). Using `gemini-flash-lite-latest` drops requirements on concise JDs and fails PRD accuracy targets. See [`eval_report.md`](eval_report.md) for full benchmark findings.
+
 ```bash
 python tests/evaluate_gold.py
 ```
@@ -112,7 +114,7 @@ Runs the full pipeline against all 15 gold resume-JD pairs and reports:
 - Unsupported Match Claims Rate (target ≤ 10%)
 - Score MAE (fit score vs gold)
 
-Latest recorded run (pre-normalization baseline): see `tests/evaluation_results.json`.
+Latest recorded run and evaluation report: see [`eval_report.md`](eval_report.md) and [`tests/evaluation_results.json`](tests/evaluation_results.json).
 
 ---
 

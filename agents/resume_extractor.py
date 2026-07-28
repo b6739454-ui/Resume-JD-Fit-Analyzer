@@ -27,19 +27,26 @@ SYSTEM_PROMPT = """คุณคือระบบดึงข้อมูลจ�
 
 กฎสำคัญ:
 1. ทุก skill ที่ระบุ ต้องมี evidence เป็นข้อความที่ตัดมาจากเรซูเม่จริงเท่านั้น ห้ามแต่งขึ้นเอง
-2. ถ้าไม่สามารถระบุจำนวนปีประสบการณ์ได้ชัดเจน ให้ปล่อยเป็น null ไม่ต้องเดา
-3. ดึงเฉพาะข้อมูลที่ปรากฏจริงในข้อความ ห้ามสมมติหรือเติมข้อมูลที่ไม่มี
-4. skill ให้รวมทั้ง technical skills (เช่น Python, SQL) และ soft/domain skills ที่ระบุชัดเจน (เช่น Project Management)
+2. evidence ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง (เช่น "พัฒนา API ด้วย Python และ FastAPI")
+   ห้ามใช้แค่ชื่อ skill โดดๆ (เช่น "Python" หรือ "FastAPI") เป็น evidence เด็ดขาด
+   ถ้า skill ปรากฏเฉพาะใน keyword list และไม่มีประโยคบริบทรองรับ → evidence = null
+3. ถ้าไม่สามารถระบุจำนวนปีประสบการณ์ได้ชัดเจน ให้ปล่อยเป็น null ไม่ต้องเดา
+4. ดึงเฉพาะข้อมูลที่ปรากฏจริงในข้อความ ห้ามสมมติหรือเติมข้อมูลที่ไม่มี
+5. skill ให้รวมทั้ง technical skills (เช่น Python, SQL) และ soft/domain skills ที่ระบุชัดเจน (เช่น Project Management)
 """
 
 
-def get_client() -> instructor.Instructor:
-    """สร้าง instructor client ที่ผูกกับ Gemini ไว้ เรียกใช้ซ้ำได้ทั้งไฟล์"""
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("ไม่เจอ GOOGLE_API_KEY ใน .env — เช็คไฟล์ .env ก่อน")
+import httpx
 
-    genai_client = genai.Client(api_key=api_key)
+
+def get_client(api_key_env_var: str = "GOOGLE_API_KEY") -> instructor.Instructor:
+    """สร้าง instructor client ที่ผูกกับ Gemini ไว้ เรียกใช้ซ้ำได้ทั้งไฟล์"""
+    api_key = os.getenv(api_key_env_var)
+    if not api_key:
+        raise ValueError(f"ไม่เจอ {api_key_env_var} ใน .env — เช็คไฟล์ .env ก่อน")
+
+    httpx_client = httpx.Client(http2=False, timeout=60.0)
+    genai_client = genai.Client(api_key=api_key, http_options={"httpx_client": httpx_client})
     client = instructor.from_genai(
         genai_client,
         mode=instructor.Mode.GENAI_TOOLS,
@@ -47,7 +54,7 @@ def get_client() -> instructor.Instructor:
     return client
 
 
-def extract_resume(resume_text: str, model: str = "gemini-flash-latest") -> ResumeData:
+def extract_resume(resume_text: str, model: str = "gemini-flash-latest", api_key_env_var: str = "GOOGLE_API_KEY") -> ResumeData:
     """
     รับ resume text -> คืนค่าเป็น ResumeData ที่ผ่าน validation แล้ว
     หลัง LLM สกัด skills ออกมาแล้ว จะ normalize ชื่อ skill ทุกตัวผ่าน
@@ -63,7 +70,7 @@ def extract_resume(resume_text: str, model: str = "gemini-flash-latest") -> Resu
     if not resume_text or not resume_text.strip():
         raise ValueError("resume_text ว่างเปล่า — ต้องมีเนื้อหาก่อนเรียก extract")
 
-    client = get_client()
+    client = get_client(api_key_env_var)
 
     result = client.chat.completions.create(
         model=model,

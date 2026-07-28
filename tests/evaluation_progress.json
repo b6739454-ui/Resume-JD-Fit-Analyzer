@@ -1,0 +1,59 @@
+{
+  "results": [
+    {
+      "pair_id": "pair_01",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 87,
+      "pred_llm_nice": 83,
+      "pred_llm_fit": 85,
+      "pred_py_must": 75,
+      "pred_py_nice": 66,
+      "pred_py_fit": 72
+    },
+    {
+      "pair_id": "pair_02",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 62,
+      "pred_llm_nice": 33,
+      "pred_llm_fit": 53,
+      "pred_py_must": 62,
+      "pred_py_nice": 33,
+      "pred_py_fit": 53
+    },
+    {
+      "pair_id": "pair_03",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 70,
+      "pred_llm_nice": 62,
+      "pred_llm_fit": 67,
+      "pred_py_must": 20,
+      "pred_py_nice": 50,
+      "pred_py_fit": 29
+    },
+    {
+      "pair_id": "pair_04",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 50,
+      "pred_llm_nice": 50,
+      "pred_llm_fit": 50,
+      "pred_py_must": 0,
+      "pred_py_nice": 0,
+      "pred_py_fit": 0
+    }
+  ],
+  "failed_pairs": [],
+  "must_have_correct": 4,
+  "must_have_total": 17,
+  "nice_to_have_correct": 3,
+  "nice_to_have_total": 12,
+  "unsupported_claims_count": 12,
+  "total_claims_count": 26
+}

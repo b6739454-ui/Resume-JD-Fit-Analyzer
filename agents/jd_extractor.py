@@ -34,13 +34,17 @@ SYSTEM_PROMPT = """คุณคือระบบดึงข้อมูลจ�
 """
 
 
-def get_client() -> instructor.Instructor:
-    """สร้าง instructor client ที่ผูกกับ Gemini ไว้"""
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("ไม่เจอ GOOGLE_API_KEY ใน .env — เช็คไฟล์ .env ก่อน")
+import httpx
 
-    genai_client = genai.Client(api_key=api_key)
+
+def get_client(api_key_env_var: str = "GOOGLE_API_KEY") -> instructor.Instructor:
+    """สร้าง instructor client ที่ผูกกับ Gemini ไว้"""
+    api_key = os.getenv(api_key_env_var)
+    if not api_key:
+        raise ValueError(f"ไม่เจอ {api_key_env_var} ใน .env — เช็คไฟล์ .env ก่อน")
+
+    httpx_client = httpx.Client(http2=False, timeout=60.0)
+    genai_client = genai.Client(api_key=api_key, http_options={"httpx_client": httpx_client})
     client = instructor.from_genai(
         genai_client,
         mode=instructor.Mode.GENAI_TOOLS,
@@ -48,7 +52,7 @@ def get_client() -> instructor.Instructor:
     return client
 
 
-def extract_jd(jd_text: str, model: str = "gemini-flash-latest") -> JDData:
+def extract_jd(jd_text: str, model: str = "gemini-flash-latest", api_key_env_var: str = "GOOGLE_API_KEY") -> JDData:
     """
     รับ JD text -> คืนค่าเป็น JDData ที่ผ่าน validation แล้ว
     หลัง LLM สกัด requirements ออกมาแล้ว จะ normalize ชื่อ skill ทุกตัวผ่าน
@@ -64,7 +68,7 @@ def extract_jd(jd_text: str, model: str = "gemini-flash-latest") -> JDData:
     if not jd_text or not jd_text.strip():
         raise ValueError("jd_text ว่างเปล่า — ต้องมีเนื้อหาก่อนเรียก extract")
 
-    client = get_client()
+    client = get_client(api_key_env_var)
 
     result = client.chat.completions.create(
         model=model,

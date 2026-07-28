@@ -60,12 +60,16 @@ SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ช�
 """
 
 
-def get_client() -> instructor.Instructor:
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("ไม่เจอ GOOGLE_API_KEY ใน .env — เช็คไฟล์ .env ก่อน")
+import httpx
 
-    genai_client = genai.Client(api_key=api_key)
+
+def get_client(api_key_env_var: str = "GOOGLE_API_KEY") -> instructor.Instructor:
+    api_key = os.getenv(api_key_env_var)
+    if not api_key:
+        raise ValueError(f"ไม่เจอ {api_key_env_var} ใน .env — เช็คไฟล์ .env ก่อน")
+
+    httpx_client = httpx.Client(http2=False, timeout=60.0)
+    genai_client = genai.Client(api_key=api_key, http_options={"httpx_client": httpx_client})
     client = instructor.from_genai(
         genai_client,
         mode=instructor.Mode.GENAI_TOOLS,
@@ -91,6 +95,7 @@ def _call_llm_with_retry(client, model, response_model, messages):
 def analyze_gaps(
     matches: list[SkillMatch],
     model: str = "gemini-flash-latest",
+    api_key_env_var: str = "GOOGLE_API_KEY",
 ) -> GapAnalysisResult:
     """
     รับ list ของ SkillMatch (จาก Fit Analyzer) -> คืนค่าเป็น GapAnalysisResult
@@ -105,7 +110,7 @@ def analyze_gaps(
     if not matches:
         raise ValueError("matches ว่างเปล่า — ต้องมีผลจาก Fit Analyzer ก่อนเรียก Gap Agent")
 
-    client = get_client()
+    client = get_client(api_key_env_var)
 
     user_content = f"""
 ผลการเทียบ skill ทั้งหมด (matches):
