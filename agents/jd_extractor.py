@@ -31,6 +31,14 @@ SYSTEM_PROMPT = """คุณคือระบบดึงข้อมูลจ�
 2. ถ้า JD ระบุจำนวนปีประสบการณ์ขั้นต่ำของ skill ใดชัดเจน ให้ใส่ min_years ตามนั้น ถ้าไม่ระบุให้ปล่อย null
 3. ดึงเฉพาะข้อมูลที่ปรากฏจริงในข้อความ ห้ามสมมติหรือเติม skill ที่ไม่มีในประกาศ
 4. overall_min_years ใช้เฉพาะกรณีที่ JD ระบุประสบการณ์รวมโดยไม่ผูกกับ skill ใด skill หนึ่ง (เช่น "มีประสบการณ์ทำงานอย่างน้อย 3 ปี")
+5. กฎ 1 bullet = 1 requirement (สำคัญมาก):
+   - bullet 1 บรรทัดใน JD ให้สกัดออกมาเป็น requirement เดียวเท่านั้น ห้ามแตกย่อยเป็นหลาย requirement จาก 1 bullet
+   - ถ้า bullet กล่าวถึงหลาย tool พร้อมกัน (เช่น "Adobe Illustrator, Photoshop, InDesign") ให้ตั้งชื่อ skill รวมจาก bullet นั้นเป็น requirement เดียว (เช่น "Adobe Creative Suite")
+   - ตัวอย่างที่ถูกต้อง: bullet "Experience with branding, packaging, and typography" → requirement เดียว ชื่อว่า "branding and packaging design"
+   - ตัวอย่างที่ผิด: bullet เดียวกัน → แตกเป็น "trademarks", "packaging functions", "typography" (ห้ามทำแบบนี้)
+6. ห้าม hallucinate ชื่อ tool/software จาก bullet ที่ไม่ได้ระบุชื่อ tool ชัดเจน:
+   - ถ้า bullet พูดถึงทักษะทั่วไป เช่น "Experience with account management" → ชื่อ requirement คือ "account management" ไม่ใช่ชื่อ software ที่ LLM คิดขึ้นเอง
+   - ถ้า bullet ระบุชื่อ software ชัดเจน เช่น "Proficiency in Salesforce" → ใช้ชื่อนั้นได้
 """
 
 
@@ -79,11 +87,10 @@ def extract_jd(jd_text: str, model: str = "gemini-flash-latest", api_key_env_var
         ],
     )
 
-    # Normalize ชื่อ skill ทุกตัวผ่าน taxonomy มาตรฐาน (ESCO + O*NET)
-    for req in result.requirements:
-        norm = normalize_skill_name(req.skill)
-        if norm["matched"]:
-            req.skill = norm["normalized"]
+    # หมายเหตุ: ไม่ normalize ชื่อ skill ใน JD Extractor
+    # เพราะ JD ต้นฉบับมีชื่อ skill ที่ถูกต้องอยู่แล้ว
+    # การ normalize ทำให้เกิด false mapping (เช่น "B2B sales" → "bMobile Technology Sales")
+    # ที่ทำให้ Fit Analyzer หา evidence ผิด และ Judge reject ทั้งหมด
 
     return result
 

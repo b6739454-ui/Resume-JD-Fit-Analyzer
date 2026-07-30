@@ -48,13 +48,20 @@ SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ค�
 1. requirements แต่ละตัวมี [index] กำกับ — ต้องตอบ matches ครบทุกตัว เรียงตาม index เดียวกันเป๊ะ (สำคัญมาก — ระบบใช้ index จับคู่)
 2. status ของแต่ละ match ให้เลือกจาก:
    - "met" = resume มีประโยคบริบทที่แสดงว่าใช้ skill นี้จริง (ใน work_experience หรือ education) และปีประสบการณ์ (ถ้า JD กำหนด) เพียงพอ
-   - "partial" = resume มีชื่อ skill ใน skills list เท่านั้น (ไม่มีประโยคบริบทรองรับ) หรือมี skill ที่เกี่ยวข้องแต่ไม่ตรง หรือประสบการณ์ไม่ถึงที่กำหนด
+   - "partial" = resume มีชื่อ skill ใน skills list หรือ highlights เท่านั้น (แม้ไม่มีประโยคบริบทรองรับใน work_experience) หรือมี skill ที่เกี่ยวข้องแต่ไม่ตรง หรือประสบการณ์ไม่ถึงที่กำหนด
    - "missing" = ไม่พบ skill นี้หรือสิ่งที่เกี่ยวข้องใน resume เลย
-3. evidence ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง คัดลอกมาจาก work_experience หรือ education เท่านั้น
-   ห้ามใช้แค่ชื่อ skill โดดๆ จาก skills list เป็น evidence (เช่น ห้ามใช้ "Python" หรือ "ASP.NET" โดดๆ)
-   ถ้า skill ปรากฏเฉพาะใน skills list และไม่มีประโยคบริบทจาก work_experience/education รองรับ:
-   → evidence = null และ status = "partial" (ไม่ใช่ "met")
-   ถ้า status เป็น "missing" ให้ evidence เป็น null
+3. evidence ต้องเป็นข้อความที่คัดลอกมาจาก resume ต้นฉบับตรงๆ เท่านั้น — ห้าม paraphrase สรุป หรือแต่งขึ้นมาเอง:
+   - สำหรับ status="met": ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง คัดลอกมาจาก work_experience หรือ education
+   - สำหรับ status="partial": ถ้า skill ปรากฏใน skills list หรือ highlights ของ resume (แม้ไม่มีประโยคบริบทเชิงงานจาก work_experience) ให้ตั้ง status='partial' และ evidence ต้องเป็นข้อความที่ยกมาจาก skills list/highlights นั้นตรงๆ (เช่น 'Adobe Creative Suite (Illustrator, Photoshop, InDesign)')
+   - ห้ามปล่อย evidence เป็น null เว้นแต่ status='missing' เท่านั้น — ทุก match ที่ status เป็น 'met' หรือ 'partial' ต้องมี evidence เสมอ ไม่มีข้อยกเว้น
+   - ถ้า status เป็น "missing" ให้ evidence เป็น null
+   - **กฎการเลือกภาษา evidence (สำคัญมาก)**:
+     - สำหรับ resume ที่เขียนเป็นภาษาอังกฤษล้วน → evidence ต้องเป็นภาษาอังกฤษเท่านั้น คัดลอกตรงจาก resume
+     - สำหรับ resume ที่เขียนเป็นภาษาไทยล้วน → evidence ต้องเป็นภาษาไทยเท่านั้น คัดลอกตรงจาก resume
+     - สำหรับ resume แบบ bilingual (มีทั้งภาษาไทยและอังกฤษในเล่มเดียว) → **ให้ prefer English evidence ก่อนเสมอ** ถ้า skill นั้นมีคำอธิบายเป็นภาษาอังกฤษอยู่ใน resume ให้ใช้ส่วนนั้น; ใช้ Thai evidence ก็ต่อเมื่อ skill นั้นปรากฏเฉพาะในส่วนภาษาไทยของ resume เท่านั้น
+     - ห้ามแปล ห้าม paraphrase ไม่ว่ากรณีใด — copy ตรงจากต้นฉบับเท่านั้น
+     - ตัวอย่างที่ถูกต้อง (bilingual resume, prefer English): "Managed Major Accounts worth more than $50k in four territories" (จากส่วน English ของ resume)
+     - ตัวอย่างที่ผิด (bilingual resume): เลือก Thai evidence ทั้งที่มี English section อธิบายเรื่องเดียวกัน หรือแปล English เป็น Thai ขึ้นมาเอง
 4. years_found ใส่ตามข้อมูลจริงที่พบใน resume สำหรับ skill นั้น ถ้าไม่มีให้เป็น null
 5. ต้องตอบ matches ครบทุก requirement (จำนวนเท่ากับ requirements ที่ส่งมา ไม่เพิ่มไม่ลด) — ไม่ต้องคำนวณคะแนนใดๆ
 """
