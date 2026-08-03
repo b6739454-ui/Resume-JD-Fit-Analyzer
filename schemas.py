@@ -77,6 +77,13 @@ class SkillMatch(BaseModel):
     years_found: Optional[float] = Field(
         None, description="จำนวนปีประสบการณ์ที่พบจริงใน resume สำหรับ skill นี้"
     )
+    category: Literal["must_have", "nice_to_have"] = Field(
+        "must_have", description="ระดับความสำคัญของ skill requirement นี้ (must_have หรือ nice_to_have)"
+    )
+    requirement_index: int = Field(
+        0, description="ลำดับ index ของ requirement นี้จาก JD (0-based)"
+    )
+
 
 
 # ---------------------------------------------------------

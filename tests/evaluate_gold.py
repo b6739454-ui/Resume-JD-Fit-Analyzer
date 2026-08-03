@@ -6,6 +6,12 @@ import argparse
 import hashlib
 from dotenv import load_dotenv
 
+# Ensure UTF-8 output on Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # Ensure we can import agents
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -231,11 +237,19 @@ def main():
         with open(extraction_cache_path, 'w', encoding='utf-8') as ef:
             json.dump(data_to_save, ef, indent=2, ensure_ascii=False)
 
-    # Load progress if exists
+    # Load progress if exists — แต่ต้อง invalidate ถ้า prompt hash เปลี่ยน
+    # (progress เก่าใช้ Fit/Judge prompt เก่า ผลลัพธ์ไม่ถูกต้องกับ prompt ใหม่)
     if os.path.exists(progress_path):
         try:
             with open(progress_path, 'r', encoding='utf-8') as pf:
                 progress_data = json.load(pf)
+            cached_progress_hash = progress_data.get("__prompt_hash__", None)
+            if cached_progress_hash != current_prompt_hash:
+                # prompt เปลี่ยน → ผล Fit/Judge เก่าใช้ไม่ได้ ต้องรันใหม่ทั้งหมด
+                print(f"⚠️ evaluation_progress.json ถูก invalidate (prompt hash เปลี่ยน: {cached_progress_hash} → {current_prompt_hash})", flush=True)
+                print(f"   จะรัน Fit + Judge ใหม่ทั้งหมด (Extractor ใช้ cache ได้ถ้า hash ตรง)", flush=True)
+                # results / counters ยังคงเป็นค่า default (ว่างเปล่า) จากข้างบน
+            else:
                 results = progress_data.get("results", [])
                 failed_pairs = progress_data.get("failed_pairs", [])
                 must_have_correct = progress_data.get("must_have_correct", 0)
@@ -244,14 +258,16 @@ def main():
                 nice_to_have_total = progress_data.get("nice_to_have_total", 0)
                 unsupported_claims_count = progress_data.get("unsupported_claims_count", 0)
                 total_claims_count = progress_data.get("total_claims_count", 0)
-            print(f"📂 พบไฟล์ evaluation_progress.json — โหลดผลลัพธ์เดิมที่สำเร็จแล้ว {len(results)}/{len(dataset)} รายการ", flush=True)
+                print(f"📂 พบไฟล์ evaluation_progress.json — โหลดผลลัพธ์เดิมที่สำเร็จแล้ว {len(results)}/{len(dataset)} รายการ", flush=True)
         except Exception as pe:
             print(f"⚠️ อ่านไฟล์ evaluation_progress.json ไม่สำเร็จ ({pe}) — เริ่มรันใหม่ทั้งหมด", flush=True)
+
 
     completed_pair_ids = {r["pair_id"] for r in results}
 
     def save_progress():
         prog_data = {
+            "__prompt_hash__": current_prompt_hash,  # บันทึก hash เพื่อ validate ในรอบถัดไป
             "results": results,
             "failed_pairs": failed_pairs,
             "must_have_correct": must_have_correct,

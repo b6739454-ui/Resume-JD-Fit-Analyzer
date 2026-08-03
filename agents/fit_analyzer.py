@@ -47,12 +47,18 @@ SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ค�
 กฎสำคัญ:
 1. requirements แต่ละตัวมี [index] กำกับ — ต้องตอบ matches ครบทุกตัว เรียงตาม index เดียวกันเป๊ะ (สำคัญมาก — ระบบใช้ index จับคู่)
 2. status ของแต่ละ match ให้เลือกจาก:
-   - "met" = resume มีประโยคบริบทที่แสดงว่าใช้ skill นี้จริง (ใน work_experience หรือ education) และปีประสบการณ์ (ถ้า JD กำหนด) เพียงพอ
-   - "partial" = resume มีชื่อ skill ใน skills list หรือ highlights เท่านั้น (แม้ไม่มีประโยคบริบทรองรับใน work_experience) หรือมี skill ที่เกี่ยวข้องแต่ไม่ตรง หรือประสบการณ์ไม่ถึงที่กำหนด
+   - "met" = resume แสดงหลักฐานการใช้ skill จริงในบริบทงาน ซึ่งรวมถึง 2 แหล่ง:
+     (ก) ประโยคบริบทใน work_experience หรือ education ที่แสดงการใช้งานจริง
+     (ข) ข้อความใน highlights หรือ summary ที่เป็น experience statement — เช่น "Experience of working with X", "Proficient in X with Y years", "X years experience in Y", "Worked extensively with X", "Expertise in X" (ไม่ใช่แค่ชื่อ skill โดดๆ)
+   - "partial" = resume มีชื่อ skill เท่านั้น โดยไม่มีบริบทการใช้งาน เช่น:
+     (ก) ชื่อ skill โดดๆ ใน skills list (เช่น "Adobe Photoshop", "Python" ในลิสต์ skills)
+     (ข) มี skill ที่เกี่ยวข้องแต่ไม่ตรงทีเดียว หรือประสบการณ์ไม่ถึงที่กำหนด
    - "missing" = ไม่พบ skill นี้หรือสิ่งที่เกี่ยวข้องใน resume เลย
+   - ตัวอย่าง met (Highlights แบบ experience statement): evidence='Experience of working with branding, packaging, and printmaking' → met
+   - ตัวอย่าง partial (skills list bare name): evidence='Adobe Creative Suite' (เพียงชื่อเดียว ไม่มีบริบท) → partial
 3. evidence ต้องเป็นข้อความที่คัดลอกมาจาก resume ต้นฉบับตรงๆ เท่านั้น — ห้าม paraphrase สรุป หรือแต่งขึ้นมาเอง:
-   - สำหรับ status="met": ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง คัดลอกมาจาก work_experience หรือ education
-   - สำหรับ status="partial": ถ้า skill ปรากฏใน skills list หรือ highlights ของ resume (แม้ไม่มีประโยคบริบทเชิงงานจาก work_experience) ให้ตั้ง status='partial' และ evidence ต้องเป็นข้อความที่ยกมาจาก skills list/highlights นั้นตรงๆ (เช่น 'Adobe Creative Suite (Illustrator, Photoshop, InDesign)')
+   - สำหรับ status="met": ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง คัดลอกมาจาก work_experience, education, หรือ highlights/summary ที่มี experience statement
+   - สำหรับ status="partial": evidence เป็นชื่อ skill หรือกลุ่ม skill จาก skills list ที่ยกมาตรงๆ (เช่น 'Adobe Creative Suite (Illustrator, Photoshop, InDesign)')
    - ห้ามปล่อย evidence เป็น null เว้นแต่ status='missing' เท่านั้น — ทุก match ที่ status เป็น 'met' หรือ 'partial' ต้องมี evidence เสมอ ไม่มีข้อยกเว้น
    - ถ้า status เป็น "missing" ให้ evidence เป็น null
    - **กฎการเลือกภาษา evidence (สำคัญมาก)**:
@@ -200,6 +206,11 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) —
             f"— ต้อง retry ไม่ใช่เดา"
         )
 
+    # เติม category และ requirement_index เข้าไปใน SkillMatch ตามลำดับใน jd_data.requirements
+    for i, (req, match) in enumerate(zip(jd_data.requirements, llm_result.matches)):
+        match.category = req.priority
+        match.requirement_index = i
+
     # Python คำนวณคะแนนตามสูตร 70/30 — index-based, deterministic
     must, nice, fit = _compute_scores_python(llm_result.matches, jd_data.requirements)
 
@@ -209,6 +220,7 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) —
         nice_to_have_score=nice,
         fit_score=fit,
     )
+
 
 
 # ---------------------------------------------------------
