@@ -9,18 +9,19 @@ evidence — **decision support only, not a hire/reject decision.**
 
 ---
 
-## Status: Iteration 2 (v0.2.0) complete — Iteration 3 (v1.0.0) in progress
+## Status: Iteration 1 — `v0.1.0` "Walking skeleton"
 
-All 5 agents make real LLM calls (Gemini) with RAG-based skill normalization
-(ESCO + O*NET) and Judge Agent evidence-grounding wired in and tested against
-the full 15-pair gold set. Frontend UI + PDF/DOCX upload are partially built
-(Iteration 3 work). See table below for what's done per iteration.
+This release proves the problem/solution shape end-to-end **without** a full
+AI stack yet. All `/fit/*` and `/evaluate` endpoints currently return
+**mock / hard-coded** responses that match the final Pydantic schemas exactly.
+Real LLM calls, RAG-based skill normalization, and the judge agent land in
+Iteration 2 (`v0.2.0`).
 
-| Iteration | Tag | What's done |
+| Iteration | Tag | What changes |
 |---|---|---|
-| 1 | `v0.1.0` | Schemas + API stub + mock responses ✅ |
-| 2 | `v0.2.0` | Real agent pipeline (RAG, LLM, judge) + eval on full gold set ✅ |
-| 3 | `v1.0.0` | UI (in progress) + guardrails + full eval + demo (not yet tagged) |
+| 1 (this release) | `v0.1.0` | Schemas + API stub + mock responses |
+| 2 | `v0.2.0` | Real agent pipeline (RAG, LLM, judge) + eval on gold subset |
+| 3 | `v1.0.0` | UI + guardrails + full gold-set eval + demo |
 
 ---
 
@@ -77,7 +78,7 @@ Open **http://127.0.0.1:8000/docs** for interactive Swagger UI.
 
 ---
 
-## Try it
+## Try it (Iteration 1 — mock responses)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/fit/analyze \
@@ -86,7 +87,7 @@ curl -X POST http://127.0.0.1:8000/fit/analyze \
 ```
 
 See [`examples/sample_response.json`](examples/sample_response.json) for the
-expected shape of the response.
+expected shape of the response (mock data for now, real pipeline in `v0.2.0`).
 
 ---
 

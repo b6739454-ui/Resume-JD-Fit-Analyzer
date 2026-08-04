@@ -190,8 +190,6 @@ def judge_matches(
                     status="missing",
                     evidence=None,
                     years_found=None,
-                    category=m.category,
-                    requirement_index=m.requirement_index,
                 )
             )
 

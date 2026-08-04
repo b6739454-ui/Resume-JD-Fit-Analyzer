@@ -12,11 +12,7 @@ FastAPI stub สำหรับ Iteration 1 (v0.1.0 "Walking skeleton")
 Iteration 2 ค่อยเปลี่ยนจาก mock เป็นเรียก agent จริง (resume_extractor, jd_extractor, ...)
 """
 
-import io
-import docx
-import pdfplumber
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from schemas import FitReport, SkillMatch
@@ -25,52 +21,6 @@ app = FastAPI(
     title="Resume <-> JD Fit Analyzer API",
     description="PRD-6: วิเคราะห์ความเหมาะสมระหว่าง resume และ job description แบบมีหลักฐานอ้างอิง",
     version="0.1.0",
-)
-
-
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    text_parts = []
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            text_parts.append(page.extract_text() or "")
-    return "\n".join(text_parts).strip()
-
-
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    text_parts = []
-    doc = docx.Document(io.BytesIO(file_bytes))
-    for p in doc.paragraphs:
-        if p.text.strip():
-            text_parts.append(p.text.strip())
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                if cell.text.strip():
-                    text_parts.append(cell.text.strip())
-    return "\n".join(text_parts).strip()
-
-
-def extract_text_from_file(filename: str, file_bytes: bytes) -> str:
-    ext = (filename or "").lower().split(".")[-1]
-    if ext == "pdf":
-        return extract_text_from_pdf(file_bytes)
-    elif ext in ("docx", "doc"):
-        return extract_text_from_docx(file_bytes)
-    elif ext == "txt":
-        return file_bytes.decode("utf-8", errors="ignore").strip()
-    else:
-        # Default try pdf fallback
-        try:
-            return extract_text_from_pdf(file_bytes)
-        except Exception:
-            return file_bytes.decode("utf-8", errors="ignore").strip()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 
@@ -116,68 +66,31 @@ def _build_mock_fit_report() -> FitReport:
                 status="met",
                 evidence="5+ years of financial planning and analysis experience in IT budget management",
                 years_found=5.0,
-                category="must_have",
-                requirement_index=0,
             ),
             SkillMatch(
                 skill="Sarbanes-Oxley (SOX) audit",
                 status="met",
                 evidence="Led SOX audit documentation and control testing for three consecutive fiscal years",
                 years_found=3.0,
-                category="must_have",
-                requirement_index=1,
             ),
             SkillMatch(
                 skill="Executive presentation",
                 status="partial",
                 evidence="Presented quarterly budget summaries to department leads",
                 years_found=None,
-                category="must_have",
-                requirement_index=2,
             ),
             SkillMatch(
                 skill="Capital budget cycle development",
                 status="missing",
                 evidence=None,
                 years_found=None,
-                category="must_have",
-                requirement_index=3,
-            ),
-            SkillMatch(
-                skill="Advanced Excel / VBA",
-                status="met",
-                evidence="Built automated Excel dashboards with VBA macros for month-end close",
-                years_found=4.0,
-                category="nice_to_have",
-                requirement_index=4,
-            ),
-            SkillMatch(
-                skill="Power BI or Tableau",
-                status="partial",
-                evidence="Basic familiarity with Power BI for reporting",
-                years_found=None,
-                category="nice_to_have",
-                requirement_index=5,
-            ),
-            SkillMatch(
-                skill="CPA certification",
-                status="missing",
-                evidence=None,
-                years_found=None,
-                category="nice_to_have",
-                requirement_index=6,
             ),
         ],
-        gaps=[
-            "Capital budget cycle development",
-            "CPA certification",
-        ],
+        gaps=["Capital budget cycle development"],
         suggested_interview_questions=[
             "คุณเคยมีส่วนร่วมในการพัฒนา capital budget cycle ทั้งกระบวนการหรือไม่ ถ้ายัง เคยเห็นหรือเรียนรู้จากที่ไหนบ้าง",
-            "ปัจจุบันกำลังสอบหรือเตรียมตัวสอบ CPA certification อยู่หรือไม่ มีกรอบเวลาอย่างไร",
         ],
     )
-
 
 
 # ---------------------------------------------------------
@@ -200,48 +113,6 @@ def analyze(request: AnalyzeRequest) -> FitReport:
     """
     if not request.resume_text.strip() or not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="resume_text และ jd_text ต้องไม่ว่างเปล่า")
-
-    return _build_mock_fit_report()
-
-
-@app.post("/fit/analyze-file", response_model=FitReport)
-async def analyze_file(
-    resume_file: UploadFile = File(..., description="ไฟล์ Resume (.pdf หรือ .docx)"),
-    jd_file: UploadFile = File(..., description="ไฟล์ Job Description (.pdf หรือ .docx)"),
-) -> FitReport:
-    """
-    รับไฟล์ Resume + JD (.pdf หรือ .docx) -> สกัดข้อความและวิเคราะห์ความเหมาะสม (FitReport)
-    """
-    resume_bytes = await resume_file.read()
-    jd_bytes = await jd_file.read()
-
-    try:
-        resume_text = extract_text_from_file(resume_file.filename, resume_bytes)
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"ไม่สามารถอ่านไฟล์ Resume '{resume_file.filename}' ได้: {str(e)}"
-        )
-
-    if not resume_text or not resume_text.strip():
-        raise HTTPException(
-            status_code=400,
-            detail=f"ไม่สามารถดึงข้อความจากไฟล์ Resume '{resume_file.filename}' ได้ กรุณาตรวจสอบว่าเป็นไฟล์ที่มีข้อความ ไม่ใช่ภาพสแกน"
-        )
-
-    try:
-        jd_text = extract_text_from_file(jd_file.filename, jd_bytes)
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"ไม่สามารถอ่านไฟล์ JD '{jd_file.filename}' ได้: {str(e)}"
-        )
-
-    if not jd_text or not jd_text.strip():
-        raise HTTPException(
-            status_code=400,
-            detail=f"ไม่สามารถดึงข้อความจากไฟล์ JD '{jd_file.filename}' ได้ กรุณาตรวจสอบว่าเป็นไฟล์ที่มีข้อความ ไม่ใช่ภาพสแกน"
-        )
 
     return _build_mock_fit_report()
 

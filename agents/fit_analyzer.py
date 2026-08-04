@@ -56,12 +56,17 @@ SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ค�
    - "missing" = ไม่พบ skill นี้หรือสิ่งที่เกี่ยวข้องใน resume เลย
    - ตัวอย่าง met (Highlights แบบ experience statement): evidence='Experience of working with branding, packaging, and printmaking' → met
    - ตัวอย่าง partial (skills list bare name): evidence='Adobe Creative Suite' (เพียงชื่อเดียว ไม่มีบริบท) → partial
-3. evidence ต้องเป็นข้อความที่คัดลอกมาจาก resume ต้นฉบับตรงๆ เท่านั้น — ห้าม paraphrase สรุป หรือแต่งขึ้นมาเอง:
+3. evidence ต้องเป็นข้อความที่คัดลอกมาจาก resume ต้นฉบับตรงๆ แบบ exact substring ตัวอักษรต่อตัวอักษรเท่านั้น — ห้าม paraphrase สรุป หรือแต่งขึ้นมาเอง:
    - สำหรับ status="met": ต้องเป็นประโยคหรือวลีที่แสดงบริบทการใช้งานจริง คัดลอกมาจาก work_experience, education, หรือ highlights/summary ที่มี experience statement
    - สำหรับ status="partial": evidence เป็นชื่อ skill หรือกลุ่ม skill จาก skills list ที่ยกมาตรงๆ (เช่น 'Adobe Creative Suite (Illustrator, Photoshop, InDesign)')
    - ห้ามปล่อย evidence เป็น null เว้นแต่ status='missing' เท่านั้น — ทุก match ที่ status เป็น 'met' หรือ 'partial' ต้องมี evidence เสมอ ไม่มีข้อยกเว้น
    - ถ้า status เป็น "missing" ให้ evidence เป็น null
-   - **กฎการเลือกภาษา evidence (สำคัญมาก)**:
+   - **กฎเหล็กการคัดลอก evidence (สำคัญมากที่สุด — หากผิดแค่ตัวอักษรเดียวระบบ Judge จะปัดทิ้งเป็น missing ทันที)**:
+     - **เลือกเพียง 1 bullet point หรือ 1 วลีเดี่ยวๆ ที่สั้นและตรงที่สุดเพียงอันเดียวเท่านั้น**: ห้ามนำหลาย bullet points หรือหลายผลงานมาร้อยต่อกันด้วยเครื่องหมายจุลภาค (,), อัฒภาค (;), หรือคำว่า 'and' / 'as well as' เด็ดขาด (เช่น หากเจอ 'Blueprint fluency' ให้ใช้แค่ 'Blueprint fluency' หรือหากเจอ 'reviewed drawings' ให้ใช้แค่ 'reviewed drawings' ห้ามรวบเอาประโยคอื่นรอบข้างมารวมเป็นข้อความยาว)
+     - **ห้ามรวม/เชื่อมหลายประโยคเข้าด้วยกัน**: ห้ามนำข้อความที่แยกกันอยู่คนละประโยคหรือคนละหัวข้อในเรซูเม่มารวมเป็นประโยคเดียว แม้เนื้อหาจะเกี่ยวข้องกันก็ตาม — หากมีหลักฐานอยู่ในหลายประโยค ให้เลือกยกมาแค่ 1 ประโยคที่ตรงและสมบูรณ์ที่สุด คัดลอกตรงตัวอักษรต่อตัวอักษร ห้ามยำหลายประโยคมารวมกันเด็ดขาด
+     - **ห้ามดัดแปลงตัวอักษรเด็ดขาด**: ห้ามแก้รูปกริยา (เช่น เปลี่ยน "Managing" เป็น "Managed"), ห้ามตัดทอนข้อความกลางประโยค, ห้ามเปลี่ยนคำแม้ความหมายเหมือนเดิม — evidence ต้องเป็น substring ที่พบได้ตรงเป๊ะใน resume_text ต้นฉบับ ไม่ใช่แค่ "สื่อความหมายเดียวกัน"
+     - **ตัวอย่างที่ห้ามทำ (ผิด)**: เรซูเม่มี 2 ประโยคแยกกันคือ 'Managed Major Accounts worth more than $50k in four territories.' และ 'Reviewed and grew account base by 18%...' — ห้ามรวมเป็น 'Managed major accounts worth over $50k across four territories, grew account base by 18%' เพราะเป็นการ paraphrase ให้เลือกยกมาแค่ประโยคเดียวที่ตรงที่สุดแทน
+   - **กฎการเลือกภาษา evidence**:
      - สำหรับ resume ที่เขียนเป็นภาษาอังกฤษล้วน → evidence ต้องเป็นภาษาอังกฤษเท่านั้น คัดลอกตรงจาก resume
      - สำหรับ resume ที่เขียนเป็นภาษาไทยล้วน → evidence ต้องเป็นภาษาไทยเท่านั้น คัดลอกตรงจาก resume
      - สำหรับ resume แบบ bilingual (มีทั้งภาษาไทยและอังกฤษในเล่มเดียว) → **ให้ prefer English evidence ก่อนเสมอ** ถ้า skill นั้นมีคำอธิบายเป็นภาษาอังกฤษอยู่ใน resume ให้ใช้ส่วนนั้น; ใช้ Thai evidence ก็ต่อเมื่อ skill นั้นปรากฏเฉพาะในส่วนภาษาไทยของ resume เท่านั้น
@@ -206,11 +211,6 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) —
             f"— ต้อง retry ไม่ใช่เดา"
         )
 
-    # เติม category และ requirement_index เข้าไปใน SkillMatch ตามลำดับใน jd_data.requirements
-    for i, (req, match) in enumerate(zip(jd_data.requirements, llm_result.matches)):
-        match.category = req.priority
-        match.requirement_index = i
-
     # Python คำนวณคะแนนตามสูตร 70/30 — index-based, deterministic
     must, nice, fit = _compute_scores_python(llm_result.matches, jd_data.requirements)
 
@@ -220,7 +220,6 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) —
         nice_to_have_score=nice,
         fit_score=fit,
     )
-
 
 
 # ---------------------------------------------------------
