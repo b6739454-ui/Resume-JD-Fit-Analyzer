@@ -211,6 +211,11 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) —
             f"— ต้อง retry ไม่ใช่เดา"
         )
 
+    # เติม category และ requirement_index เข้าไปใน SkillMatch ตามลำดับใน jd_data.requirements
+    for i, (req, match) in enumerate(zip(jd_data.requirements, llm_result.matches)):
+        match.category = req.priority
+        match.requirement_index = i
+
     # Python คำนวณคะแนนตามสูตร 70/30 — index-based, deterministic
     must, nice, fit = _compute_scores_python(llm_result.matches, jd_data.requirements)
 
