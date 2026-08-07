@@ -12,6 +12,7 @@ FastAPI stub สำหรับ Iteration 1 (v0.1.0 "Walking skeleton")
 Iteration 2 ค่อยเปลี่ยนจาก mock เป็นเรียก agent จริง (resume_extractor, jd_extractor, ...)
 """
 
+import os
 import io
 import docx
 import pdfplumber
@@ -21,6 +22,13 @@ from pydantic import BaseModel, Field
 
 from schemas import FitReport, SkillMatch
 from utils.pii_handler import anonymize_pii
+
+from agents.resume_extractor import extract_resume
+from agents.jd_extractor import extract_jd
+from agents.fit_analyzer import analyze_fit
+from agents.gap_agent import analyze_gaps
+from agents.judge_agent import judge_matches
+from tests.evaluate_gold import calculate_scores_python
 
 app = FastAPI(
     title="Resume <-> JD Fit Analyzer API",
@@ -179,6 +187,88 @@ def _build_mock_fit_report() -> FitReport:
     )
 
 
+def _call_agent_with_rotation(agent_fn, *args, **kwargs):
+    """เรียกใช้ agent function โดยรองรับการสลับ API Key อัตโนมัติเมื่อเจอ 429 Rate Limit"""
+    candidate_keys = [
+        "GOOGLE_API_KEY",
+        "GOOGLE_API_KEY_FRIEND1",
+        "GOOGLE_API_KEY_FRIEND2",
+        "GOOGLE_API_KEY_FRIEND3",
+        "GOOGLE_API_KEY_FRIEND4",
+        "GOOGLE_API_KEY_FRIEND5",
+    ]
+    valid_key_envs = [k for k in candidate_keys if os.getenv(k)]
+    if not valid_key_envs:
+        valid_key_envs = ["GOOGLE_API_KEY"]
+
+    last_error = None
+    for key_env in valid_key_envs:
+        try:
+            kwargs["api_key_env_var"] = key_env
+            return agent_fn(*args, **kwargs)
+        except Exception as e:
+            err_str = str(e).lower()
+            last_error = e
+            if any(k in err_str for k in ("429", "resource_exhausted", "quota")):
+                print(f"[Key Rotation] Key [{key_env}] 429 quota exhausted, switching to next key...", flush=True)
+                continue
+            else:
+                raise e
+    raise last_error
+
+
+def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
+    """
+    รัน 5 agents จริงตามลำดับ:
+    1. Resume Extractor
+    2. JD Extractor
+    3. Fit Analyzer
+    4. Gap Agent
+    5. Judge Agent
+    คำนวณคะแนนด้วย Python deterministic formula และคืนค่าเป็น FitReport
+    """
+    # PRD Section 8: PII Handling
+    pii_result = anonymize_pii(resume_text)
+    anonymized_resume = pii_result["anonymized_text"]
+    print(f"[PII Handler] Detected PII: {pii_result['detected_pii']}")
+    print(f"[PII Handler] Anonymized Resume Text sample: {anonymized_resume[:100]}...")
+
+    try:
+        # Step 1: Resume Extractor
+        resume_data = _call_agent_with_rotation(extract_resume, resume_text)
+
+        # Step 2: JD Extractor
+        jd_data = _call_agent_with_rotation(extract_jd, jd_text)
+
+        # Step 3: Fit Analyzer
+        fit_res = _call_agent_with_rotation(analyze_fit, resume_data, jd_data)
+
+        # Step 4: Gap Agent
+        gap_res = _call_agent_with_rotation(analyze_gaps, fit_res.matches)
+
+        # Step 5: Judge Agent
+        verified_matches = _call_agent_with_rotation(judge_matches, fit_res.matches, resume_text)
+
+        # Step 6: Python Verified Score Calculation
+        py_must, py_nice, py_fit = calculate_scores_python(verified_matches, jd_data.requirements)
+
+        return FitReport(
+            fit_score=py_fit,
+            must_have_score=py_must,
+            nice_to_have_score=py_nice,
+            matches=verified_matches,
+            gaps=gap_res.gaps,
+            suggested_interview_questions=gap_res.suggested_interview_questions,
+        )
+    except Exception as e:
+        err_msg = str(e)
+        print(f"[Pipeline Error] {err_msg}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"เกิดข้อผิดพลาดในการประมวลผล pipeline: {err_msg}"
+        )
+
+
 # ---------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------
@@ -191,28 +281,12 @@ def root():
 @app.post("/fit/analyze", response_model=FitReport)
 def analyze(request: AnalyzeRequest) -> FitReport:
     """
-    รับ resume + JD (text) -> คืน FitReport
-
-    Iteration 1: คืน mock response เสมอ (ไม่สนใจเนื้อหาจริงของ request)
-    Iteration 2: จะเปลี่ยนมาเรียก resume_extractor -> jd_extractor -> fit_analyzer
-                 -> gap_agent -> judge_agent ตามลำดับจริง
+    รับ resume + JD (text) -> รัน 5-agent pipeline จริงแล้วคืน FitReport
     """
     if not request.resume_text.strip() or not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="resume_text และ jd_text ต้องไม่ว่างเปล่า")
 
-    # PRD Section 8: PII Handling
-    # 1. Original resume_text is kept separated if needed for extraction
-    original_resume_text = request.resume_text
-
-    # 2. Anonymize PII before any logging / DB storage
-    pii_result = anonymize_pii(original_resume_text)
-    anonymized_resume_text = pii_result["anonymized_text"]
-
-    # Safe logging (Anonymized version only)
-    print(f"[PII Handler] Detected PII: {pii_result['detected_pii']}")
-    print(f"[PII Handler] Anonymized Resume Text sample: {anonymized_resume_text[:100]}...")
-
-    return _build_mock_fit_report()
+    return _run_pipeline(request.resume_text, request.jd_text)
 
 
 @app.post("/fit/analyze-file", response_model=FitReport)
@@ -221,7 +295,7 @@ async def analyze_file(
     jd_file: UploadFile = File(..., description="ไฟล์ Job Description (.pdf หรือ .docx)"),
 ) -> FitReport:
     """
-    รับไฟล์ Resume + JD (.pdf หรือ .docx) -> สกัดข้อความและวิเคราะห์ความเหมาะสม (FitReport)
+    รับไฟล์ Resume + JD (.pdf หรือ .docx) -> สกัดข้อความและรัน 5-agent pipeline จริง
     """
     resume_bytes = await resume_file.read()
     jd_bytes = await jd_file.read()
@@ -254,11 +328,7 @@ async def analyze_file(
             detail=f"ไม่สามารถดึงข้อความจากไฟล์ JD '{jd_file.filename}' ได้ กรุณาตรวจสอบว่าเป็นไฟล์ที่มีข้อความ ไม่ใช่ภาพสแกน"
         )
 
-    # PRD Section 8: PII Handling
-    pii_result = anonymize_pii(resume_text)
-    print(f"[PII Handler] Detected PII: {pii_result['detected_pii']}")
-
-    return _build_mock_fit_report()
+    return _run_pipeline(resume_text, jd_text)
 
 
 @app.post("/fit/batch", response_model=list[FitReport])
