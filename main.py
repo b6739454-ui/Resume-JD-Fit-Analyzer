@@ -229,9 +229,9 @@ def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
 
     Fallback: ตั้งค่า USE_MOCK_PIPELINE=true ใน .env หรือ environment เพื่อสลับกลับ mock mode ทันที
     """
-    # Demo Fallback: ถ้า USE_MOCK_PIPELINE=true ให้คืน mock แทน (ไม่ต้องแก้โค้ด)
-    if os.getenv("USE_MOCK_PIPELINE", "false").lower() == "true":
-        print("[Pipeline] Mock mode active (USE_MOCK_PIPELINE=true) — returning mock report")
+    # Demo Fallback: ตรวจสอบทั้ง env var (startup-time) และ global flag (runtime toggle)
+    if _USE_MOCK_MODE or os.getenv("USE_MOCK_PIPELINE", "false").lower() == "true":
+        print("[Pipeline] Mock mode active — returning mock report")
         return _build_mock_fit_report()
 
     # PRD Section 8: PII Handling
@@ -278,12 +278,49 @@ def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
 
 
 # ---------------------------------------------------------
+# Runtime Mock Mode — สลับได้ทันทีโดยไม่ต้อง restart server
+# ---------------------------------------------------------
+_USE_MOCK_MODE: bool = os.getenv("USE_MOCK_PIPELINE", "false").lower() == "true"
+
+
+# ---------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------
 @app.get("/")
 def root():
     """Health check ง่ายๆ เช็คว่า server รันอยู่"""
     return {"status": "ok", "service": "resume-jd-fit-analyzer", "version": "0.1.0"}
+
+
+@app.post("/admin/toggle-mock")
+def toggle_mock(enable: bool):
+    """
+    สลับโหมด mock/real pipeline แบบ runtime ทันที ไม่ต้อง restart server
+    ใช้สำหรับ demo fallback เมื่อ API quota หมดกลาง demo
+
+    Usage:
+      POST /admin/toggle-mock?enable=true   → เปิด mock mode
+      POST /admin/toggle-mock?enable=false  → กลับเป็น real pipeline
+    """
+    global _USE_MOCK_MODE
+    _USE_MOCK_MODE = enable
+    mode_str = "MOCK" if enable else "REAL PIPELINE"
+    print(f"[Admin] Pipeline mode switched to: {mode_str}")
+    return {
+        "status": "ok",
+        "mock_mode": _USE_MOCK_MODE,
+        "message": f"Pipeline switched to {mode_str} mode"
+    }
+
+
+@app.get("/admin/mode-status")
+def mode_status():
+    """ตรวจสอบ pipeline mode ปัจจุบัน"""
+    return {
+        "mock_mode": _USE_MOCK_MODE,
+        "mode": "MOCK" if _USE_MOCK_MODE else "REAL PIPELINE",
+        "env_USE_MOCK_PIPELINE": os.getenv("USE_MOCK_PIPELINE", "false")
+    }
 
 
 @app.post("/fit/analyze", response_model=FitReport)
