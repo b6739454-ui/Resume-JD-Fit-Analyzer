@@ -226,7 +226,14 @@ def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
     4. Gap Agent
     5. Judge Agent
     คำนวณคะแนนด้วย Python deterministic formula และคืนค่าเป็น FitReport
+
+    Fallback: ตั้งค่า USE_MOCK_PIPELINE=true ใน .env หรือ environment เพื่อสลับกลับ mock mode ทันที
     """
+    # Demo Fallback: ถ้า USE_MOCK_PIPELINE=true ให้คืน mock แทน (ไม่ต้องแก้โค้ด)
+    if os.getenv("USE_MOCK_PIPELINE", "false").lower() == "true":
+        print("[Pipeline] Mock mode active (USE_MOCK_PIPELINE=true) — returning mock report")
+        return _build_mock_fit_report()
+
     # PRD Section 8: PII Handling
     pii_result = anonymize_pii(resume_text)
     anonymized_resume = pii_result["anonymized_text"]
@@ -267,6 +274,7 @@ def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
             status_code=500,
             detail=f"เกิดข้อผิดพลาดในการประมวลผล pipeline: {err_msg}"
         )
+
 
 
 # ---------------------------------------------------------
