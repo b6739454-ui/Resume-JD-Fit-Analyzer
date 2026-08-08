@@ -1,12 +1,16 @@
 # --- Secrets: ห้าม commit เด็ดขาด ---
 .env
+frontend/.env
+frontend/.env.local
 
 # --- Python ---
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
 
 # --- Embedding cache ---
 skill_taxonomy_embeddings.npy
@@ -16,8 +20,17 @@ skill_taxonomy_embeddings.npy
 .vscode/
 .idea/
 
-# --- Evaluation output ---
-tests/evaluation_results.json
+# --- Evaluation progress/cache (ชั่วคราว ไม่ต้อง commit) ---
+# หมายเหตุ: evaluation_results.json ไม่อยู่ในนี้ เพราะต้องแนบเป็น Release Asset ตาม course guide
 tests/evaluation_progress.json
 tests/extraction_cache.json
 tests/key_rotation_state.json
+
+# --- Debug output ---
+*.log
+task-*.log
+
+# --- Frontend (Node.js / Vite) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
