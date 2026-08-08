@@ -16,7 +16,7 @@ import os
 import io
 import docx
 import pdfplumber
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -282,6 +282,34 @@ def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
 # ---------------------------------------------------------
 _USE_MOCK_MODE: bool = os.getenv("USE_MOCK_PIPELINE", "false").lower() == "true"
 
+# Secret key สำหรับ admin endpoints (ตั้งใน .env ว่า ADMIN_SECRET=xxx)
+# ถ้าไม่ตั้ง จะ fallback เป็น 'demo-secret' (สำหรับ local dev เท่านั้น)
+_ADMIN_SECRET: str = os.getenv("ADMIN_SECRET", "demo-secret")
+
+
+def _verify_admin(request: Request, x_admin_secret: str | None = None):
+    """
+    Guard สำหรับ admin endpoints — ผ่านถ้าเป็น localhost หรือมี secret header ถูกต้อง
+    - จาก localhost (127.0.0.1 / ::1): ไม่ต้องมี secret
+    - จาก IP อื่น: ต้องส่ง header 'X-Admin-Secret: <ADMIN_SECRET>'
+    """
+    from fastapi import Header
+    client_ip = request.client.host if request.client else "unknown"
+    is_localhost = client_ip in ("127.0.0.1", "::1", "localhost", "testclient")
+
+    # ดึง header ด้วยตัวเองเพราะ Depends + Header ใน signature เดียวกันซับซ้อนกว่า
+    secret_header = request.headers.get("x-admin-secret", "")
+
+    if is_localhost:
+        return  # localhost เชื่อใจได้เลย
+    if secret_header == _ADMIN_SECRET:
+        return  # ส่ง secret ถูกต้อง
+
+    raise HTTPException(
+        status_code=403,
+        detail="Admin endpoint: ต้องเรียกจาก localhost หรือส่ง X-Admin-Secret header ที่ถูกต้อง"
+    )
+
 
 # ---------------------------------------------------------
 # Endpoints
@@ -293,11 +321,12 @@ def root():
 
 
 @app.post("/admin/toggle-mock")
-def toggle_mock(enable: bool):
+def toggle_mock(enable: bool, request: Request, _: None = Depends(_verify_admin)):
     """
     สลับโหมด mock/real pipeline แบบ runtime ทันที ไม่ต้อง restart server
     ใช้สำหรับ demo fallback เมื่อ API quota หมดกลาง demo
 
+    Auth: เรียกได้จาก localhost โดยตรง หรือส่ง header X-Admin-Secret
     Usage:
       POST /admin/toggle-mock?enable=true   → เปิด mock mode
       POST /admin/toggle-mock?enable=false  → กลับเป็น real pipeline
@@ -305,7 +334,8 @@ def toggle_mock(enable: bool):
     global _USE_MOCK_MODE
     _USE_MOCK_MODE = enable
     mode_str = "MOCK" if enable else "REAL PIPELINE"
-    print(f"[Admin] Pipeline mode switched to: {mode_str}")
+    client_ip = request.client.host if request.client else "unknown"
+    print(f"[Admin] Pipeline mode switched to: {mode_str} (requested from {client_ip})")
     return {
         "status": "ok",
         "mock_mode": _USE_MOCK_MODE,
@@ -314,8 +344,8 @@ def toggle_mock(enable: bool):
 
 
 @app.get("/admin/mode-status")
-def mode_status():
-    """ตรวจสอบ pipeline mode ปัจจุบัน"""
+def mode_status(request: Request, _: None = Depends(_verify_admin)):
+    """ตรวจสอบ pipeline mode ปัจจุบัน (auth required)"""
     return {
         "mock_mode": _USE_MOCK_MODE,
         "mode": "MOCK" if _USE_MOCK_MODE else "REAL PIPELINE",
