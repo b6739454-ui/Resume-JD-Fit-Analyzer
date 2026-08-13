@@ -237,8 +237,13 @@ def _run_pipeline(resume_text: str, jd_text: str) -> FitReport:
     # PRD Section 8: PII Handling
     pii_result = anonymize_pii(resume_text)
     anonymized_resume = pii_result["anonymized_text"]
-    print(f"[PII Handler] Detected PII: {pii_result['detected_pii']}")
-    print(f"[PII Handler] Anonymized Resume Text sample: {anonymized_resume[:100]}...")
+    _pii = pii_result['detected_pii']
+    print(
+        f"[PII Handler] Detected PII — "
+        f"{len(_pii['names'])} name(s), "
+        f"{len(_pii['emails'])} email(s), "
+        f"{len(_pii['phones'])} phone(s)"
+    )
 
     try:
         # Step 1: Resume Extractor
@@ -426,7 +431,13 @@ def analyze_batch(request: BatchAnalyzeRequest) -> list[FitReport]:
         pii_result = anonymize_pii(original_resume_text)
         anonymized_resume_text = pii_result["anonymized_text"]
 
-        print(f"[PII Handler Batch] Detected PII: {pii_result['detected_pii']}")
+        _pii = pii_result['detected_pii']
+        print(
+            f"[PII Handler Batch] Detected PII — "
+            f"{len(_pii['names'])} name(s), "
+            f"{len(_pii['emails'])} email(s), "
+            f"{len(_pii['phones'])} phone(s)"
+        )
         results.append(_build_mock_fit_report())
 
     return results
