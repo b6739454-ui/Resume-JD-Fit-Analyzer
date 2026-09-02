@@ -11,7 +11,7 @@ evidence — **decision support only, not a hire/reject decision.**
 
 ## Current Status: `v1.0.0` (Complete & Verified)
 
-All phases complete: Full 4-Agent Pipeline, RAG-based Skill Taxonomy Normalization, Evidence Judge Agent, React Recruiter UI, Extraction Caching, and Merged Gap Agent.
+All phases complete: Full 4-Agent Pipeline, RAG-based Skill Taxonomy Normalization, Evidence Judge Agent, React Recruiter UI, Extraction Caching, and Merged Gap Agent (Gold Dataset 15/15 Pairs Verified ✅).
 
 | Iteration | Tag | Status | Description |
 |---|---|:---:|---|
