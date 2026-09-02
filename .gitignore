@@ -21,8 +21,8 @@ skill_taxonomy_embeddings.npy
 .idea/
 
 # --- Evaluation progress/cache (ชั่วคราว ไม่ต้อง commit) ---
-# หมายเหตุ: evaluation_results.json ไม่อยู่ในนี้ เพราะต้องแนบเป็น Release Asset ตาม course guide
-tests/evaluation_progress.json
+# หมายเหตุ: evaluation_results*.json ไม่อยู่ในนี้ เพราะต้องแนบเป็น Release Asset ตาม course guide
+tests/evaluation_progress*.json
 tests/extraction_cache.json
 tests/key_rotation_state.json
 

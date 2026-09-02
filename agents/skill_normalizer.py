@@ -13,12 +13,22 @@ agents/skill_normalizer.py
 
 การติดตั้ง (รันที่เครื่องเพื่อน ไม่ใช่ sandbox นี้ เพราะที่นี่ไม่มีอินเทอร์เน็ต):
     pip install sentence-transformers numpy pandas
+
+⚠️  หมายเหตุ uvicorn --reload (root cause ของ embedding โหลดซ้ำ):
+    Singleton (_instance) ทำงานถูกต้องภายใน process เดียวกัน
+    แต่ `uvicorn --reload` สร้าง subprocess ใหม่ทุกครั้งที่ไฟล์เปลี่ยน
+    → _instance กลับเป็น None → โหลด embedding ใหม่ทุกครั้ง (~2000s ตาม log)
+    วิธีแก้: ใช้ `uvicorn main:app --port 8000` (ไม่ใส่ --reload) ตอน production/demo
 """
 
 import os
+import time
+import logging
 import numpy as np
 import pandas as pd
 from functools import lru_cache
+
+logger = logging.getLogger(__name__)
 
 # ชี้ไป data/ ที่อยู่ใน project root เสมอ ไม่ขึ้นกับ working directory ตอนรัน
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,14 +64,26 @@ class SkillNormalizer:
 
         from sentence_transformers import SentenceTransformer
 
-        print("[skill_normalizer] กำลังโหลด taxonomy master และโมเดล embedding (ครั้งแรกเท่านั้น)...")
+        _t_start = time.perf_counter()
+
+        print(
+            "[skill_normalizer] 🔄 เริ่มโหลด taxonomy master + embedding model...\n"
+            "  (ถ้าเจอบ่อยทุก request แสดงว่ารันแบบ --reload อยู่ → ให้เปลี่ยนเป็น: uvicorn main:app --port 8000)"
+        )
+        logger.info("[skill_normalizer] Starting cold-load of taxonomy + embedding model")
 
         # โหลดตาราง taxonomy master ที่ทำไว้จาก ESCO + O*NET
         self.taxonomy_df = pd.read_csv(TAXONOMY_CSV_PATH)
         # ตัดแถวที่ชื่อซ้ำกันเป๊ะ (คนละ source แต่ชื่อเดียวกัน) เก็บไว้แค่ตัวแรก ลดขนาดตารางค้นหา
         self.taxonomy_df = self.taxonomy_df.drop_duplicates(subset=["normalized_name"]).reset_index(drop=True)
 
+        _t_csv = time.perf_counter()
+        logger.info(f"[skill_normalizer] taxonomy CSV loaded in {_t_csv - _t_start:.2f}s ({len(self.taxonomy_df):,} rows)")
+
         self.model = SentenceTransformer(MODEL_NAME)
+
+        _t_model = time.perf_counter()
+        logger.info(f"[skill_normalizer] SentenceTransformer '{MODEL_NAME}' loaded in {_t_model - _t_csv:.2f}s")
 
         # ถ้ามี embedding cache ที่คำนวณไว้แล้วตรงกับจำนวนแถวปัจจุบัน ให้ใช้ของเดิม ไม่ต้องคำนวณซ้ำ
         if os.path.exists(EMBEDDING_CACHE_PATH):
@@ -69,7 +91,15 @@ class SkillNormalizer:
             if cached.shape[0] == len(self.taxonomy_df):
                 self.taxonomy_embeddings = cached
                 self._loaded = True
-                print(f"[skill_normalizer] โหลด embedding cache แล้ว ({len(self.taxonomy_df):,} ทักษะ)")
+                _t_end = time.perf_counter()
+                self._load_time_seconds = _t_end - _t_start
+                msg = (
+                    f"[skill_normalizer] ✅ โหลด embedding cache สำเร็จ ({len(self.taxonomy_df):,} ทักษะ) "
+                    f"รวมเวลา {self._load_time_seconds:.2f}s\n"
+                    f"  → model load: {_t_model - _t_csv:.2f}s | npy cache load: {_t_end - _t_model:.2f}s"
+                )
+                print(msg)
+                logger.info(f"[skill_normalizer] CACHE HIT — total load time: {self._load_time_seconds:.2f}s")
                 return
 
         # คำนวณ embedding ใหม่ทั้งหมด (ใช้เวลาสักครู่ครั้งแรก ~ไม่กี่นาทีสำหรับ 20,000+ รายการ)
@@ -80,13 +110,28 @@ class SkillNormalizer:
             + self.taxonomy_df["alt_names"].fillna("").str.replace(" | ", " ")
         ).tolist()
 
+        print(f"[skill_normalizer] ⚙️  คำนวณ embedding ใหม่ {len(texts):,} รายการ (อาจใช้เวลาหลายนาที)...")
         self.taxonomy_embeddings = self.model.encode(
             texts, show_progress_bar=True, batch_size=64, normalize_embeddings=True
         )
         np.save(EMBEDDING_CACHE_PATH, self.taxonomy_embeddings)
 
         self._loaded = True
-        print(f"[skill_normalizer] คำนวณ embedding เสร็จแล้ว ({len(self.taxonomy_df):,} ทักษะ) และบันทึก cache ไว้")
+        _t_end = time.perf_counter()
+        self._load_time_seconds = _t_end - _t_start
+        msg = (
+            f"[skill_normalizer] ✅ คำนวณ embedding เสร็จแล้ว ({len(self.taxonomy_df):,} ทักษะ) "
+            f"บันทึก cache ไว้แล้ว รวมเวลา {self._load_time_seconds:.2f}s"
+        )
+        print(msg)
+        logger.info(f"[skill_normalizer] EMBEDDING COMPUTED — total load time: {self._load_time_seconds:.2f}s")
+
+    @property
+    def load_time_seconds(self) -> float:
+        """คืนค่าเวลาที่ใช้โหลด embedding ครั้งล่าสุด (วินาที) — ใช้ใน health check / monitoring"""
+        return getattr(self, "_load_time_seconds", 0.0)
+
+
 
     def normalize(self, raw_skill_name: str) -> dict:
         """

@@ -3,9 +3,19 @@ import type { PipelineStep } from '../types';
 
 interface PipelineProgressProps {
   steps: PipelineStep[];
+  elapsedSeconds?: number;
+  isLoading?: boolean;
 }
 
-const PipelineProgress: React.FC<PipelineProgressProps> = ({ steps }) => (
+/** คืนข้อความให้กำลังใจตามเวลาที่รอไปแล้ว */
+function getWaitMessage(elapsed: number): string {
+  if (elapsed < 30) return 'กำลังวิเคราะห์...';
+  if (elapsed < 90) return 'กำลังประมวลผล อาจใช้เวลา 1-3 นาที...';
+  if (elapsed < 180) return 'ระบบกำลังเปรียบเทียบ skill อย่างละเอียด กรุณารอสักครู่...';
+  return 'ใกล้เสร็จแล้ว ขอบคุณที่รอ 🙏';
+}
+
+const PipelineProgress: React.FC<PipelineProgressProps> = ({ steps, elapsedSeconds = 0, isLoading = false }) => (
   <div className="pipeline-progress-container">
     <div className="pipeline-steps">
       {steps.map((step) => {
@@ -30,6 +40,24 @@ const PipelineProgress: React.FC<PipelineProgressProps> = ({ steps }) => (
         );
       })}
     </div>
+
+    {/* Progress bar + elapsed time — แสดงเฉพาะตอน loading */}
+    {isLoading && (
+      <div className="pipeline-timing">
+        <div className="progress-bar-track">
+          <div className="progress-bar-indeterminate" />
+        </div>
+        <div className="pipeline-elapsed">
+          <span className="elapsed-icon">⏱</span>
+          <span className="elapsed-text">
+            {getWaitMessage(elapsedSeconds)}
+          </span>
+          <span className="elapsed-seconds">
+            ({elapsedSeconds}s)
+          </span>
+        </div>
+      </div>
+    )}
   </div>
 );
 

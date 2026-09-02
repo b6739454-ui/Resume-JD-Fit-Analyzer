@@ -1,14 +1,16 @@
 """
 agents/fit_analyzer.py
 
-Agent ตัวที่ 3: Fit Analyzer
+Agent ตัวที่ 3: Fit Analyzer (+ Merged Gap Agent)
 หน้าที่: รับ ResumeData (จาก Resume Extractor) + JDData (จาก JD Extractor)
         -> เรียก Gemini เทียบแต่ละ skill requirement กับข้อมูลใน resume
         -> คืนค่าเป็น FitAnalysisResult (list ของ SkillMatch + คะแนนเบื้องต้น)
 
-หมายเหตุ: agent ตัวนี้ยังไม่ใส่ gaps / suggested_interview_questions / bias_disclaimer
-เต็มรูปแบบ (นั่นเป็นหน้าที่ของ Gap Agent และขั้นตอนรวมผลสุดท้าย)
-ตัวนี้โฟกัสที่ "matches" และคะแนนที่คำนวณจาก matches เท่านั้น
+Gap Agent Merge (env MERGED_GAP_AGENT=true, default):
+    ใช้ analyze_fit_and_gaps() แทน analyze_fit() + analyze_gaps() แยกกัน
+    → ประหยัด 1 LLM call (~20% ของ quota ต่อการวิเคราะห์ 1 ครั้ง)
+    → gaps + suggested_interview_questions คืนมาพร้อมกับ matches ใน LLM call เดียว
+    ตั้ง MERGED_GAP_AGENT=false ใน .env เพื่อ rollback กลับแบบเดิม (2 calls แยกกัน)
 """
 
 import os
@@ -32,12 +34,30 @@ class LLMMatchResult(BaseModel):
     matches: list[SkillMatch] = Field(default_factory=list, description="ผลเทียบทุก skill requirement")
 
 
+# Schema สำหรับ Merged Gap Agent — matches + gaps + interview questions ใน LLM call เดียว
+class CombinedLLMResult(BaseModel):
+    matches: list[SkillMatch] = Field(default_factory=list, description="ผลเทียบทุก skill requirement")
+    gaps: list[str] = Field(
+        default_factory=list,
+        description="รายชื่อ skill ที่ขาด (เฉพาะ match ที่ status เป็น missing หรือ partial)"
+    )
+    suggested_interview_questions: list[str] = Field(
+        default_factory=list,
+        description="คำถามสัมภาษณ์ที่แนะนำ เพื่อเจาะลึกจุดที่ขาดหรือยังไม่ชัดเจน (ภาษาไทย)"
+    )
+    transferable_notes: list[str] = Field(
+        default_factory=list,
+        description="ข้อสังเกตว่า skill ที่ candidate มีอยู่แล้วอาจช่วยทดแทน skill ที่ขาดได้เร็วแค่ไหน"
+    )
+
+
 # Schema สำหรับส่งออกให้แก่ agent ถัดไป: matches + คะแนนจาก Python
 class FitAnalysisResult(BaseModel):
     matches: list[SkillMatch] = Field(default_factory=list, description="ผลเทียบทุก skill requirement")
     must_have_score: int = Field(..., ge=0, le=100, description="คะแนนเฉพาะส่วน must-have skills")
     nice_to_have_score: int = Field(..., ge=0, le=100, description="คะแนนเฉพาะส่วน nice-to-have skills")
     fit_score: int = Field(..., ge=0, le=100, description="คะแนนรวม weighted ระหว่าง must-have และ nice-to-have")
+
 
 
 SYSTEM_PROMPT = """คุณคือระบบวิเคราะห์ความเหมาะสม (Fit Analyzer)
@@ -228,7 +248,101 @@ Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) —
 
 
 # ---------------------------------------------------------
-# ทดสอบด้วยตัวเอง: python agents/fit_analyzer.py
+# Merged Gap Agent — รวม Gap analysis เข้ามาใน Fit Analyzer
+# ใช้งาน: analyze_fit_and_gaps() แทน analyze_fit() + analyze_gaps() แยกกัน
+# ตั้ง env MERGED_GAP_AGENT=false เพื่อ rollback กลับแบบ 2 calls
+# ---------------------------------------------------------
+
+MERGED_SYSTEM_PROMPT = SYSTEM_PROMPT + """
+
+เพิ่มเติม — Gap Analysis (รวมในคำตอบเดียวกัน):
+หลังจากให้ matches ครบแล้ว ให้วิเคราะห์ช่องว่างทักษะเพิ่มเติม โดย:
+
+A. gaps: ดึงเฉพาะชื่อ skill ที่ status เป็น "missing" หรือ "partial" เท่านั้น
+   ห้ามใส่ skill ที่ status เป็น "met" ลงใน gaps
+
+B. suggested_interview_questions: เขียนคำถามสัมภาษณ์ที่ recruiter ใช้ถามเพื่อตรวจสอบจุดที่ขาด
+   - คำถามต้องเจาะจง อ้างอิงจาก skill ที่ขาดจริง ไม่ใช่คำถามทั่วไป
+   - เขียนเป็นภาษาไทย สุภาพ เหมาะกับการสัมภาษณ์งานจริง
+
+C. transferable_notes: ถ้า skill ที่ candidate มีอยู่แล้ว (status="met") เกี่ยวข้องกับ skill ที่ขาด
+   ให้ตั้งข้อสังเกตว่าอาจช่วยให้เรียนรู้ skill ที่ขาดได้เร็วขึ้น
+   ถ้าไม่มีความเกี่ยวข้องที่สมเหตุสมผล ให้ปล่อย list ว่างได้ ห้ามเดามั่ว
+   ห้ามให้ความเห็นเรื่องการตัดสินใจรับ/ไม่รับ
+"""
+
+
+def analyze_fit_and_gaps(
+    resume_data: ResumeData,
+    jd_data: JDData,
+    model: str = "gemini-flash-latest",
+    api_key_env_var: str = "GOOGLE_API_KEY",
+) -> tuple["FitAnalysisResult", "CombinedLLMResult"]:
+    """
+    Merged version: รัน Fit Analyzer + Gap Analysis ใน LLM call เดียว
+    ประหยัด ~20% quota เทียบกับการเรียก analyze_fit() + analyze_gaps() แยกกัน
+
+    Returns:
+        tuple[FitAnalysisResult, CombinedLLMResult]:
+            - FitAnalysisResult: matches + คะแนน (เหมือน analyze_fit() เดิม)
+            - CombinedLLMResult: gaps + suggested_interview_questions + transferable_notes
+    """
+    client = get_client(api_key_env_var)
+
+    indexed_requirements = [
+        {"index": i, **r.model_dump()}
+        for i, r in enumerate(jd_data.requirements)
+    ]
+
+    user_content = f"""
+ข้อมูลจาก Resume:
+{resume_data.model_dump_json(indent=2, ensure_ascii=False)}
+
+Skill Requirements จาก JD (ตำแหน่ง: {jd_data.job_title}) — ต้องตอบ matches เรียงตาม [index] เป๊ะ ครบ {len(indexed_requirements)} รายการ:
+{indexed_requirements}
+
+กรุณาเทียบทุก requirement และให้ผลลัพธ์ matches ครบ {len(indexed_requirements)} ตัว เรียงตามลำดับ index เดียวกันเป๊ะ
+จากนั้นวิเคราะห์ gaps + suggested_interview_questions + transferable_notes ตามที่ระบุใน system prompt
+"""
+
+    llm_result = _call_llm_with_retry(
+        client=client,
+        model=model,
+        response_model=CombinedLLMResult,
+        messages=[
+            {"role": "system", "content": MERGED_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+    )
+
+    # Validate matches count
+    n_expected = len(jd_data.requirements)
+    n_returned = len(llm_result.matches)
+    if n_returned != n_expected:
+        raise ValueError(
+            f"Fit Analyzer (merged) ตอบ matches ไม่ครบ: ส่งไป {n_expected} requirements "
+            f"แต่ได้ matches กลับมาแค่ {n_returned} ตัว — ต้อง retry ไม่ใช่เดา"
+        )
+
+    # เติม category และ requirement_index
+    for i, (req, match) in enumerate(zip(jd_data.requirements, llm_result.matches)):
+        match.category = req.priority
+        match.requirement_index = i
+
+    # Python คำนวณคะแนน
+    must, nice, fit = _compute_scores_python(llm_result.matches, jd_data.requirements)
+
+    fit_result = FitAnalysisResult(
+        matches=llm_result.matches,
+        must_have_score=must,
+        nice_to_have_score=nice,
+        fit_score=fit,
+    )
+
+    return fit_result, llm_result
+
+
+
 # รันต่อจาก resume_extractor.py และ jd_extractor.py จริง
 # ---------------------------------------------------------
 if __name__ == "__main__":

@@ -1,0 +1,204 @@
+{
+  "n_pairs_completed": "15 / 15",
+  "failed_pairs": [
+    {
+      "pair_id": "pair_01",
+      "error": "RuntimeError: Failed to complete agent call after maximum retries due to rate limits or timeouts."
+    },
+    {
+      "pair_id": "pair_01",
+      "error": "RuntimeError: Failed to complete agent call after maximum retries due to rate limits or timeouts."
+    }
+  ],
+  "metrics": {
+    "must_have_match_accuracy_pct": 58.18181818181818,
+    "nice_to_have_match_accuracy_pct": 50.0,
+    "unsupported_match_claims_rate_pct": 3.571428571428571,
+    "mae_llm_fit": 13.666666666666666,
+    "mae_py_fit": 14.733333333333333,
+    "mae_py_must": 10.933333333333334,
+    "mae_py_nice": 24.933333333333334
+  },
+  "details": [
+    {
+      "pair_id": "pair_01",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 87,
+      "pred_llm_nice": 100,
+      "pred_llm_fit": 90,
+      "pred_py_must": 87,
+      "pred_py_nice": 100,
+      "pred_py_fit": 90
+    },
+    {
+      "pair_id": "pair_02",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 66,
+      "pred_llm_fit": 89,
+      "pred_py_must": 100,
+      "pred_py_nice": 66,
+      "pred_py_fit": 89
+    },
+    {
+      "pair_id": "pair_03",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 37,
+      "pred_llm_fit": 81,
+      "pred_py_must": 100,
+      "pred_py_nice": 25,
+      "pred_py_fit": 77
+    },
+    {
+      "pair_id": "pair_04",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 75,
+      "pred_llm_fit": 92,
+      "pred_py_must": 100,
+      "pred_py_nice": 62,
+      "pred_py_fit": 88
+    },
+    {
+      "pair_id": "pair_05",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 33,
+      "pred_llm_fit": 79,
+      "pred_py_must": 100,
+      "pred_py_nice": 33,
+      "pred_py_fit": 79
+    },
+    {
+      "pair_id": "pair_06",
+      "gold_must": 75,
+      "gold_nice": 100,
+      "gold_fit": 82,
+      "pred_llm_must": 50,
+      "pred_llm_nice": 83,
+      "pred_llm_fit": 59,
+      "pred_py_must": 50,
+      "pred_py_nice": 83,
+      "pred_py_fit": 59
+    },
+    {
+      "pair_id": "pair_07",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 66,
+      "pred_llm_nice": 66,
+      "pred_llm_fit": 66,
+      "pred_py_must": 66,
+      "pred_py_nice": 66,
+      "pred_py_fit": 66
+    },
+    {
+      "pair_id": "pair_08",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 87,
+      "pred_llm_nice": 100,
+      "pred_llm_fit": 90,
+      "pred_py_must": 75,
+      "pred_py_nice": 100,
+      "pred_py_fit": 82
+    },
+    {
+      "pair_id": "pair_09",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 75,
+      "pred_llm_nice": 83,
+      "pred_llm_fit": 77,
+      "pred_py_must": 75,
+      "pred_py_nice": 83,
+      "pred_py_fit": 77
+    },
+    {
+      "pair_id": "pair_10",
+      "gold_must": 100,
+      "gold_nice": 16,
+      "gold_fit": 74,
+      "pred_llm_must": 83,
+      "pred_llm_nice": 33,
+      "pred_llm_fit": 68,
+      "pred_py_must": 83,
+      "pred_py_nice": 33,
+      "pred_py_fit": 68
+    },
+    {
+      "pair_id": "pair_11",
+      "gold_must": 0,
+      "gold_nice": 100,
+      "gold_fit": 30,
+      "pred_llm_must": 0,
+      "pred_llm_nice": 66,
+      "pred_llm_fit": 19,
+      "pred_py_must": 0,
+      "pred_py_nice": 66,
+      "pred_py_fit": 19
+    },
+    {
+      "pair_id": "pair_12",
+      "gold_must": 83,
+      "gold_nice": 33,
+      "gold_fit": 68,
+      "pred_llm_must": 83,
+      "pred_llm_nice": 33,
+      "pred_llm_fit": 68,
+      "pred_py_must": 83,
+      "pred_py_nice": 33,
+      "pred_py_fit": 68
+    },
+    {
+      "pair_id": "pair_13",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 100,
+      "pred_llm_fit": 100,
+      "pred_py_must": 100,
+      "pred_py_nice": 100,
+      "pred_py_fit": 100
+    },
+    {
+      "pair_id": "pair_14",
+      "gold_must": 100,
+      "gold_nice": 100,
+      "gold_fit": 100,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 100,
+      "pred_llm_fit": 100,
+      "pred_py_must": 100,
+      "pred_py_nice": 100,
+      "pred_py_fit": 100
+    },
+    {
+      "pair_id": "pair_15",
+      "gold_must": 75,
+      "gold_nice": 25,
+      "gold_fit": 60,
+      "pred_llm_must": 100,
+      "pred_llm_nice": 66,
+      "pred_llm_fit": 89,
+      "pred_py_must": 100,
+      "pred_py_nice": 66,
+      "pred_py_fit": 89
+    }
+  ]
+}
