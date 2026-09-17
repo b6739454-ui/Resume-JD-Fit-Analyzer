@@ -182,6 +182,7 @@ def main():
         nonlocal active_key_index, current_api_key_env
 
         max_attempts = 18
+        attempt_503 = 0
         for attempt in range(max_attempts):
             try:
                 kwargs["api_key_env_var"] = current_api_key_env
@@ -190,10 +191,11 @@ def main():
                 err_str = str(e).lower()
 
                 # ตรวจ 503/unavailable/timeout ก่อน — transient error
-                # หมุนเวียนลอง key ถัดไปที่ยังไม่ exhausted และเพิ่ม backoff
-                if any(k in err_str for k in ("503", "unavailable", "high demand", "timeout", "timed out")):
-                    wait_time = min(5 * (attempt % 6 + 1), 30)
-                    print(f"  ⚠️ Server transient 503/unavailable บน [{current_api_key_env}] (attempt {attempt+1}/{max_attempts}). รอ {wait_time}s และสลับ key...", flush=True)
+                # หมุนเวียนลอง key ถัดไปที่ยังไม่ exhausted และเพิ่ม backoff 30-60s สำหรับ 503 โดยเฉพาะ
+                if any(k in err_str for k in ("503", "unavailable", "high demand", "overloaded", "timeout", "timed out")):
+                    attempt_503 += 1
+                    wait_time = min(30 + (attempt_503 - 1) * 15, 60)
+                    print(f"  ⚠️ Server transient 503/unavailable บน [{current_api_key_env}] (attempt {attempt+1}/{max_attempts}, 503 retry {attempt_503}). รอ backoff {wait_time}s และสลับ key...", flush=True)
                     time.sleep(wait_time)
 
                     # สลับ key ไปยัง key ถัดไปในรายการที่ยังไม่ exhausted

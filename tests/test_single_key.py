@@ -25,6 +25,11 @@ original_values = {}
 for k in FRIEND_KEYS:
     original_values[k] = os.environ.pop(k, None)
 
+# ถ้า GOOGLE_API_KEY ใน .env ว่าง ให้ใส่ dummy key เพื่อให้ test_single_key จำลองได้ถูกต้อง
+if not os.getenv("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = "mock_key_for_single_test"
+    original_values["GOOGLE_API_KEY"] = ""
+
 print("=" * 60)
 print("  SINGLE-KEY TEST: Simulating environment with only")
 print("  GOOGLE_API_KEY (no FRIEND keys at all)")

@@ -18,6 +18,11 @@ import io
 import json
 import hashlib
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from google.genai.errors import ServerError
 import docx
 import pdfplumber
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
@@ -258,8 +263,45 @@ def _build_mock_fit_report() -> FitReport:
     )
 
 
+def _is_503_error(e: Exception) -> bool:
+    """ตรวจสอบว่าเป็น Server transient error 503 / high demand / overloaded หรือไม่"""
+    err_str = str(e).lower()
+    return (
+        isinstance(e, ServerError)
+        or any(k in err_str for k in (
+            "503",
+            "service_unavailable",
+            "service unavailable",
+            "unavailable",
+            "high demand",
+            "overloaded",
+            "model is overloaded",
+            "the model is overloaded",
+            "backend error",
+        ))
+    )
+
+
+def _is_429_error(e: Exception) -> bool:
+    """ตรวจสอบว่าเป็น Rate limit 429 / Quota exhausted หรือไม่"""
+    err_str = str(e).lower()
+    return any(k in err_str for k in (
+        "429",
+        "resource_exhausted",
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+    ))
+
+
 def _call_agent_with_rotation(agent_fn, *args, **kwargs):
-    """เรียกใช้ agent function โดยรองรับการ retry พร้อม delay และสลับ API Key อัตโนมัติเมื่อเจอ 429/503"""
+    """
+    เรียกใช้ agent function โดยรองรับการ retry และสลับ API Key อัตโนมัติ:
+    - 429 (Rate Limit / Quota): สลับ key ถัดไปทันที (รอสั้นๆ 2s) เพราะเป็นข้อจำกัดราย key
+    - 503 (High Demand / Service Unavailable): ใช้ backoff 30-60s สำหรับ 503 โดยเฉพาะ
+      เพราะ server overloaded ชั่วคราวและมักหายภายในไม่กี่นาที ไม่ retry ถี่ๆ จนหมดทุก key ภายในไม่กี่วินาที
+    """
     candidate_keys = [
         "GOOGLE_API_KEY",
         "GOOGLE_API_KEY_FRIEND1",
@@ -273,21 +315,68 @@ def _call_agent_with_rotation(agent_fn, *args, **kwargs):
         valid_key_envs = ["GOOGLE_API_KEY"]
 
     last_error = None
-    for key_env in valid_key_envs:
-        kwargs["api_key_env_var"] = key_env
-        # ลองสูงสุด 2 ครั้งต่อ key พร้อมรอ 2 วินาทีหากเจอ 503/429
-        for attempt in range(2):
-            try:
-                return agent_fn(*args, **kwargs)
-            except Exception as e:
-                err_str = str(e).lower()
-                last_error = e
-                if any(k in err_str for k in ("429", "503", "resource_exhausted", "quota", "unavailable", "service_unavailable")):
-                    print(f"[Key Rotation] Key [{key_env}] attempt {attempt+1} encountered 503/rate limit. Retrying in 2s...", flush=True)
+    key_idx = 0
+    attempt_503 = 0
+    max_503_retries = 3
+    max_429_per_key = 2
+    attempt_429_this_key = 0
+
+    while key_idx < len(valid_key_envs):
+        current_key = valid_key_envs[key_idx]
+        kwargs["api_key_env_var"] = current_key
+        try:
+            return agent_fn(*args, **kwargs)
+        except Exception as e:
+            last_error = e
+
+            # ตรวจสอบ 503 ก่อน (Transient server overload)
+            if _is_503_error(e):
+                attempt_503 += 1
+                if attempt_503 <= max_503_retries:
+                    # ปรับ backoff เป็น 30-60 วินาทีสำหรับ 503 โดยเฉพาะ (เช่น 30s -> 45s -> 60s)
+                    wait_time = min(30 + (attempt_503 - 1) * 15, 60)
+                    print(
+                        f"[Retry 503] Key [{current_key}] เจอ 503 (model overloaded / high demand). "
+                        f"Server ไม่ว่างชั่วคราว รอ backoff {wait_time}s ก่อนลองใหม่ "
+                        f"(attempt {attempt_503}/{max_503_retries})...",
+                        flush=True,
+                    )
+                    time.sleep(wait_time)
+                    # หมุนเวียน key เมื่อมีหลาย key หรือลอง key เดิม
+                    if len(valid_key_envs) > 1:
+                        key_idx = (key_idx + 1) % len(valid_key_envs)
+                    continue
+                else:
+                    print(
+                        f"[Retry 503] ครบโควต้า retry สำหรับ 503 แล้ว ({max_503_retries} ครั้ง) — ส่งต่อข้อผิดพลาด",
+                        flush=True,
+                    )
+                    raise e
+
+            # ตรวจสอบ 429 (Per-key rate limit / quota exhausted)
+            elif _is_429_error(e):
+                attempt_429_this_key += 1
+                if attempt_429_this_key < max_429_per_key:
+                    print(
+                        f"[Key Rotation] Key [{current_key}] attempt {attempt_429_this_key} เจอ 429 rate limit. รอ 2s ก่อนลองใหม่...",
+                        flush=True,
+                    )
                     time.sleep(2)
                     continue
                 else:
-                    raise e
+                    print(
+                        f"[Key Rotation] Key [{current_key}] หมดโควต้า 429 → สลับไปใช้ API Key ถัดไป",
+                        flush=True,
+                    )
+                    key_idx += 1
+                    attempt_429_this_key = 0
+                    time.sleep(1)
+                    continue
+
+            else:
+                # Error อื่นๆ ที่ไม่ใช่ 503/429 (เช่น Schema validation, Prompt injection rejection, etc.)
+                raise e
+
     raise last_error
 
 

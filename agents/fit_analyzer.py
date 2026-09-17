@@ -117,14 +117,14 @@ def get_client(api_key_env_var: str = "GOOGLE_API_KEY") -> instructor.Instructor
 
 
 @retry(
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=30, max=60),
     retry=retry_if_exception_type(ServerError),
     reraise=True,
 )
 def _call_llm_with_retry(client, model, response_model, messages):
-    """เรียก LLM พร้อม retry อัตโนมัติเมื่อเจอ 503 (server ไม่ว่างชั่วคราว)
-    รอเพิ่มขึ้นทีละรอบ (2s -> 4s -> 8s -> ...) ก่อนลองใหม่ สูงสุด 4 ครั้ง"""
+    """เรียก LLM พร้อม retry อัตโนมัติเมื่อเจอ 503 (server ไม่ว่างชั่วคราว / high demand)
+    รอ backoff 30-60 วินาทีสำหรับ 503 โดยเฉพาะ ก่อนลองใหม่ สูงสุด 3 ครั้ง"""
     return client.chat.completions.create(
         model=model,
         response_model=response_model,
