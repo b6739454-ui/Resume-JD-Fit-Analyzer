@@ -21,11 +21,11 @@ const SkillMatrixSection: React.FC<SkillMatrixSectionProps> = ({ matches }) => {
   const getStatusBadge = (status: SkillMatch['status']) => {
     switch (status) {
       case 'met':
-        return <span className="badge badge-met">✅ Met</span>;
+        return <span className="badge badge-met">Met</span>;
       case 'partial':
-        return <span className="badge badge-partial">🟡 Partial</span>;
+        return <span className="badge badge-partial">Partial</span>;
       case 'missing':
-        return <span className="badge badge-missing">❌ Missing</span>;
+        return <span className="badge badge-missing">Missing</span>;
     }
   };
 
@@ -41,7 +41,7 @@ const SkillMatrixSection: React.FC<SkillMatrixSectionProps> = ({ matches }) => {
     <section className="skill-matrix-section">
       <div className="matrix-header">
         <h3 className="matrix-title">Requirement Verification Matrix ({matches.length})</h3>
-        
+
         <div className="matrix-filters">
           <div className="filter-group">
             <span className="filter-label">Priority:</span>

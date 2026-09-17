@@ -21,6 +21,59 @@ interface InputZoneProps {
 }
 
 // ---------------------------------------------------------------------------
+// Icons
+// ---------------------------------------------------------------------------
+const IconText = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6" />
+    <path d="M8 13h8" />
+    <path d="M8 17h8" />
+    <path d="M8 9h2" />
+  </svg>
+);
+const IconUpload = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M17 8l-5-5-5 5" />
+    <path d="M12 3v12" />
+  </svg>
+);
+const IconFile = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6" />
+  </svg>
+);
+const IconBriefcase = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="2" y="7" width="20" height="14" rx="2" />
+    <path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
+    <path d="M2 12h20" />
+  </svg>
+);
+const IconCloud = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M17 8l-5-5-5 5" />
+    <path d="M12 3v12" />
+  </svg>
+);
+const IconX = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+    <path d="M18 6L6 18" />
+    <path d="M6 6l12 12" />
+  </svg>
+);
+const IconSpark = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
+    <path d="M19 13l1 2.2L22 16l-2 0.8L19 19l-1-2.2L16 16l2-0.8L19 13z" />
+    <path d="M5 14l1 2.2L8 17l-2 0.8L5 20l-1-2.2L2 17l2-0.8L5 14z" />
+  </svg>
+);
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 const formatFileSize = (bytes: number): string => {
@@ -46,7 +99,7 @@ const CardModeToggle: React.FC<{
       onClick={() => onChange('text')}
       disabled={disabled}
     >
-      📝 Paste text
+      <IconText /> Paste text
     </button>
     <button
       type="button"
@@ -54,7 +107,7 @@ const CardModeToggle: React.FC<{
       onClick={() => onChange('file')}
       disabled={disabled}
     >
-      📄 Upload file
+      <IconUpload /> Upload file
     </button>
   </div>
 );
@@ -62,12 +115,12 @@ const CardModeToggle: React.FC<{
 /** Drop-zone + hidden file input for one card */
 const FileUploadPanel: React.FC<{
   label: string;
-  icon: string;
+  isResume: boolean;
   file: File | null;
   onFile: (f: File) => void;
   onClear: () => void;
   disabled: boolean;
-}> = ({ label, icon, file, onFile, onClear, disabled }) => {
+}> = ({ label, isResume, file, onFile, onClear, disabled }) => {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -92,7 +145,7 @@ const FileUploadPanel: React.FC<{
       {file ? (
         <div className="file-preview-card">
           <div className="file-info">
-            <div className="file-icon">{icon}</div>
+            <div className="file-icon">{isResume ? <IconFile /> : <IconBriefcase />}</div>
             <div>
               <div className="file-name">{file.name}</div>
               <div className="file-size">{formatFileSize(file.size)}</div>
@@ -104,7 +157,7 @@ const FileUploadPanel: React.FC<{
             onClick={onClear}
             disabled={disabled}
           >
-            ✕ Remove
+            <IconX /> Remove
           </button>
         </div>
       ) : (
@@ -115,7 +168,7 @@ const FileUploadPanel: React.FC<{
           onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
           onClick={() => inputRef.current?.click()}
         >
-          <div className="file-dropzone-icon">📤</div>
+          <div className="file-dropzone-icon"><IconCloud /></div>
           <div className="file-dropzone-title">
             Click to upload or drag &amp; drop {label}
           </div>
@@ -142,7 +195,6 @@ const InputZone: React.FC<InputZoneProps> = ({
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [jdFile, setJdFile]         = useState<File | null>(null);
 
-  // Clear file when switching back to text
   const handleResumeModeChange = (m: InputMode) => {
     setResumeMode(m);
     if (m === 'text') setResumeFile(null);
@@ -175,7 +227,9 @@ const InputZone: React.FC<InputZoneProps> = ({
         {/* ── Resume Card ─────────────────────────────── */}
         <div className="input-col">
           <div className="card-header">
-            <label className="input-label">Resume</label>
+            <label className="input-label">
+              <IconFile /> Resume
+            </label>
             <CardModeToggle
               mode={resumeMode}
               onChange={handleResumeModeChange}
@@ -196,7 +250,7 @@ const InputZone: React.FC<InputZoneProps> = ({
           ) : (
             <FileUploadPanel
               label="Resume"
-              icon="📄"
+              isResume={true}
               file={resumeFile}
               onFile={setResumeFile}
               onClear={() => setResumeFile(null)}
@@ -208,7 +262,9 @@ const InputZone: React.FC<InputZoneProps> = ({
         {/* ── Job Description Card ─────────────────────── */}
         <div className="input-col">
           <div className="card-header">
-            <label className="input-label">Job Description</label>
+            <label className="input-label">
+              <IconBriefcase /> Job Description
+            </label>
             <CardModeToggle
               mode={jdMode}
               onChange={handleJdModeChange}
@@ -229,7 +285,7 @@ const InputZone: React.FC<InputZoneProps> = ({
           ) : (
             <FileUploadPanel
               label="Job Description"
-              icon="💼"
+              isResume={false}
               file={jdFile}
               onFile={setJdFile}
               onClear={() => setJdFile(null)}
@@ -249,10 +305,12 @@ const InputZone: React.FC<InputZoneProps> = ({
         >
           {isLoading ? (
             <>
-              <span className="spinner" /> Analyzing…
+              <span className="spinner" aria-hidden="true" /> Analyzing…
             </>
           ) : (
-            '⚡ Analyze Fit'
+            <>
+              <IconSpark /> Analyze Fit
+            </>
           )}
         </button>
       </div>

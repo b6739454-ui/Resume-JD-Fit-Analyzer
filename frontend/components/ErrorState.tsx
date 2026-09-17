@@ -5,11 +5,40 @@ interface ErrorStateProps {
   onRetry?: () => void;
 }
 
+const IconAlertCircle = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 8v5" />
+    <path d="M12 16h.01" />
+  </svg>
+);
+
+const IconClock = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 7v5l3 3" />
+  </svg>
+);
+
+const IconRefresh = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9c2.4 0 4.6.9 6.2 2.4" />
+    <path d="M21 3v6h-6" />
+  </svg>
+);
+
+const IconInfo = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </svg>
+);
+
 /** จำแนก error type จาก message และคืน user-friendly Thai message */
 function parseErrorMessage(raw: string): { title: string; body: string; isRateLimit: boolean } {
   const lower = raw.toLowerCase();
 
-  // 503 / high demand / rate limit / quota
   if (
     lower.includes('503') ||
     lower.includes('high demand') ||
@@ -28,7 +57,6 @@ function parseErrorMessage(raw: string): { title: string; body: string; isRateLi
     };
   }
 
-  // 400 / validation
   if (lower.includes('400') || lower.includes('ว่างเปล่า') || lower.includes('invalid')) {
     return {
       title: 'ข้อมูลไม่ถูกต้อง',
@@ -37,7 +65,6 @@ function parseErrorMessage(raw: string): { title: string; body: string; isRateLi
     };
   }
 
-  // network
   if (lower.includes('network') || lower.includes('fetch') || lower.includes('failed to fetch')) {
     return {
       title: 'ไม่สามารถเชื่อมต่อกับ server ได้',
@@ -46,7 +73,6 @@ function parseErrorMessage(raw: string): { title: string; body: string; isRateLi
     };
   }
 
-  // timeout
   if (lower.includes('timeout') || lower.includes('timed out')) {
     return {
       title: 'หมดเวลารอ (Timeout)',
@@ -55,7 +81,6 @@ function parseErrorMessage(raw: string): { title: string; body: string; isRateLi
     };
   }
 
-  // default
   return {
     title: 'เกิดข้อผิดพลาด',
     body: raw,
@@ -68,19 +93,24 @@ const ErrorState: React.FC<ErrorStateProps> = ({ message, onRetry }) => {
 
   return (
     <div className="error-state-card" role="alert">
-      <div className="error-icon">{isRateLimit ? '⏳' : '❌'}</div>
+      <div className="error-icon" aria-hidden="true">
+        {isRateLimit ? <IconClock /> : <IconAlertCircle />}
+      </div>
       <h3 className="error-title">{title}</h3>
       <p className="error-message" style={{ whiteSpace: 'pre-line' }}>{body}</p>
       {isRateLimit && (
         <p className="error-hint">
-          💡 <strong>เคล็ดลับ:</strong> รัน server แบบ{' '}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)' }}>
+            <span style={{ width: 16, height: 16, display: 'inline-flex' }}><IconInfo /></span> เคล็ดลับ:
+          </span>{' '}
+          รัน server แบบ{' '}
           <code>uvicorn main:app --port 8000</code> (ไม่มี <code>--reload</code>)
           เพื่อป้องกัน embedding โหลดซ้ำและประหยัด quota
         </p>
       )}
       {onRetry && (
         <button className="btn-secondary" onClick={onRetry}>
-          🔄 ลองใหม่อีกครั้ง
+          <IconRefresh /> ลองใหม่อีกครั้ง
         </button>
       )}
     </div>
